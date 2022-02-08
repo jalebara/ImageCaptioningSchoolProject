@@ -1,6 +1,9 @@
 """
-This module contains the code for the meshed memory transformer. At the end of the project,
-this module should contain the following:
+This module contains the code for the meshed memory transformer. 
+The meshed memory transformer consists of encoder and decoder stages.
+
+
+At the end of the project, this module should contain the following:
 
 - Meshed Memory Encoder
 - Meshed Memory Decoder

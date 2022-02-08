@@ -10,7 +10,7 @@ This module should contain the following
 
 import torch.nn as nn
 
-class Attention(nn.Module):
+class ScaledDotProductAttention(nn.Module):
     def __init__(self) -> None:
         super().__init__()
         raise NotImplementedError
