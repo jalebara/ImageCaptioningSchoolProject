@@ -16,6 +16,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models as models
 import typing
+from typing import Optional
+from .utils import ModelComposition
 
 class SATEncoder(nn.Module):
     """ Show, Attend, and Tell encoder. For this project, we will use EfficientNet with and without ImageNet weights
@@ -49,7 +51,7 @@ class SATDecoder(nn.Module):
     """ Show, Attend, and Tell Decoder. For this we use an LSTM model to process the features
     
     """
-    def __init__(self, latent_vector_size:int) -> typing.NoReturn:
+    def __init__(self, latent_vector_size:int, attention:Optional[nn.Module] = None) -> typing.NoReturn:
         super().__init__()
         raise NotImplementedError
     
@@ -59,4 +61,6 @@ class SATDecoder(nn.Module):
 class BayesianSATDecoder(nn.Module):
     def __init__(self) -> None:
         super().__init__()
+        raise NotImplementedError
+    def forward(self, x):
         raise NotImplementedError
