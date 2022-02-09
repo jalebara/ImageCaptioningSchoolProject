@@ -1,6 +1,4 @@
-"""Provides utilities for model training
-
-"""
+"""Provides utilities for model training"""
 import torch
 from torch.utils.tensorboard import SummaryWriter
 import torch.nn as nn
@@ -11,7 +9,7 @@ from time import time
 
 def save_model_dict(model: nn.Module, path: str) -> typing.NoReturn:
     """Wrapper function for saving model state
-    Args
+    Args:
         model (nn.Module): The model to save
         path (str): The path to the checkpoint location
     """
@@ -20,7 +18,7 @@ def save_model_dict(model: nn.Module, path: str) -> typing.NoReturn:
 
 def load_model_dict(model: nn.Module, path: str) -> nn.Module:
     """Wrapper function for loading the model state
-    Args
+    Args:
         model (nn.Module): The model to save
         path (str): The path to the checkpoint location
     """
@@ -39,10 +37,10 @@ def nlp_metrics(predicted: str, targets: list) -> dict:
      - ROUGE
      - METEOR
 
-    Args
+    Args:
         predicted (str): Predicted string
         targets (list): A list of possible representative sentences
-    Returns
+    Returns:
         (dict): A dictionary where the keys indicate the metric, and the values are the metric results
     """
     raise NotImplementedError

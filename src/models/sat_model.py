@@ -19,10 +19,20 @@ import typing
 from typing import Optional
 from .utils import ModelComposition
 
+class SATAttention(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        raise NotImplementedError
+    def forward(self, x):
+        raise NotImplementedError
 
 class SATEncoder(nn.Module):
-    """Show, Attend, and Tell encoder. For this project, we will use EfficientNet with and without ImageNet weights"""
-
+    """Show, Attend, and Tell encoder. For this project, we will use EfficientNet with ImageNet weights
+    
+    This part of the model is fairly simple, we take the convolutional outputs of the feature extraction 
+    network, then resize it to the required size for the decoder. Given the small size of the dataset,
+    it is prudent here to use a pretrained model, and remove the linear layers. 
+    """
     def __init__(
         self,
         latent_vector_size: int,
@@ -46,7 +56,6 @@ class SATEncoder(nn.Module):
             for param in features.features[unfreeze_last].parameters():
                 param.requires_grad = True
         self.features = features
-        self.latent_vector = nn.Linear(1645, latent_vector_size)
 
     def forward(self, x):
         x = self.features(x)
@@ -56,14 +65,21 @@ class SATEncoder(nn.Module):
 
 
 class SATDecoder(nn.Module):
-    """Show, Attend, and Tell Decoder. For this we use an LSTM model to process the features"""
+    """Show, Attend, and Tell Decoder. For this we use an LSTM model to process the features
+    
+    This part of the model requires some additional work. According to the Show, Attend, and Tell paper,
+    the decoder is composed of multiple parts: an MLP for initializing :math:`h_0`, an MLP for initializing :math:`c_0`
+    """
 
-    def __init__(self, latent_vector_size: int, attention: Optional[nn.Module] = None) -> typing.NoReturn:
+    def __init__(self, latent_vector_size: int, hidden_size:int, attention: Optional[nn.Module] = None) -> typing.NoReturn:
         super().__init__()
-        raise NotImplementedError
-
+        reccurent = nn.LSTM(latent_vector_size, hidden_size)
+        if attention is not None:
+            self.model = nn.Sequential([attention, reccurent])
+        else:
+            self.model = reccurent
     def forward(self, x):
-        raise NotImplementedError
+        return self.model(x)
 
 
 class BayesianSATDecoder(nn.Module):
@@ -73,3 +89,4 @@ class BayesianSATDecoder(nn.Module):
 
     def forward(self, x):
         raise NotImplementedError
+
