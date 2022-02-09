@@ -13,10 +13,32 @@ By the end of this project, this module should contain the following
 """
 
 import torch.nn as nn
+import torchvision.models as models
+import typing
+
 class SATEncoder(nn.Module):
-    def __init__(self) -> None:
-        super().__init__()
-        raise NotImplementedError
+    """ Show, Attend, and Tell encoder. For this project, we will use EfficientNet with and without ImageNet weights
+    """
+    def __init__(self, pretrained:bool=True, freeze:bool=True, unfreeze_last:int=0) -> typing.NoReturn:
+        super(SATEncoder, self).__init__()
+        features = models.efficientnet_b0(pretrained=pretrained)
+        
+        # remove classifier at the top of the model
+        features = nn.Sequential(*(list(features.children())[:-1]))
+
+        # freeze model parameters
+        if freeze:
+            for param in features.parameters():
+                param.requires_grad = False
+
+        #only useful if model is already frozen. Unfreezes the last n layers
+        if unfreeze_last > 0:
+            for param in features.features[unfreeze_last].parameters():
+                param.requires_grad = True
+        self.features = features
+    
+    def forward(self, x):
+        return self.features(x)
 
 class SATDecoder(nn.Module):
     def __init__(self) -> None:
