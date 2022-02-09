@@ -5,7 +5,6 @@ import torch
 import torch.nn as nn
 import typing
 
-
 def save_model_dict(model:nn.Module, path:str) -> typing.NoReturn:
     """ Wrapper function for saving model state
     Args
@@ -22,3 +21,12 @@ def load_model_dict(model:nn.Module, path:str) -> nn.Module:
     """
     model.load_state_dict(torch.load(path))
     return model
+
+class ModelComposition(nn.Module):
+    """ Wrapper class to compose model components
+    """
+    def __init__(self, models:list) -> typing.NoReturn:
+        super().__init__()
+        self.model = nn.Sequential(*models)
+    def forward(self, x):
+        return self.model(x)

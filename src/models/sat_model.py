@@ -13,13 +13,14 @@ By the end of this project, this module should contain the following
 """
 
 import torch.nn as nn
+import torch.nn.functional as F
 import torchvision.models as models
 import typing
 
 class SATEncoder(nn.Module):
     """ Show, Attend, and Tell encoder. For this project, we will use EfficientNet with and without ImageNet weights
     """
-    def __init__(self, pretrained:bool=True, freeze:bool=True, unfreeze_last:int=0) -> typing.NoReturn:
+    def __init__(self, latent_vector_size:int, pretrained:bool=True, freeze:bool=True, unfreeze_last:int=0) -> typing.NoReturn:
         super(SATEncoder, self).__init__()
         features = models.efficientnet_b0(pretrained=pretrained)
         
@@ -36,13 +37,23 @@ class SATEncoder(nn.Module):
             for param in features.features[unfreeze_last].parameters():
                 param.requires_grad = True
         self.features = features
+        self.latent_vector = nn.Linear(1645, latent_vector_size)
     
     def forward(self, x):
-        return self.features(x)
+        x = self.features(x)
+        x = self.latent_vector(x)
+        x = F.relu(x)
+        return x
 
 class SATDecoder(nn.Module):
-    def __init__(self) -> None:
+    """ Show, Attend, and Tell Decoder. For this we use an LSTM model to process the features
+    
+    """
+    def __init__(self, latent_vector_size:int) -> typing.NoReturn:
         super().__init__()
+        raise NotImplementedError
+    
+    def forward(self, x):
         raise NotImplementedError
 
 class BayesianSATDecoder(nn.Module):
