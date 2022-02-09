@@ -19,13 +19,20 @@ import typing
 from typing import Optional
 from .utils import ModelComposition
 
+
 class SATEncoder(nn.Module):
-    """ Show, Attend, and Tell encoder. For this project, we will use EfficientNet with and without ImageNet weights
-    """
-    def __init__(self, latent_vector_size:int, pretrained:bool=True, freeze:bool=True, unfreeze_last:int=0) -> typing.NoReturn:
+    """Show, Attend, and Tell encoder. For this project, we will use EfficientNet with and without ImageNet weights"""
+
+    def __init__(
+        self,
+        latent_vector_size: int,
+        pretrained: bool = True,
+        freeze: bool = True,
+        unfreeze_last: int = 0,
+    ) -> typing.NoReturn:
         super(SATEncoder, self).__init__()
         features = models.efficientnet_b0(pretrained=pretrained)
-        
+
         # remove classifier at the top of the model
         features = nn.Sequential(*(list(features.children())[:-1]))
 
@@ -34,33 +41,35 @@ class SATEncoder(nn.Module):
             for param in features.parameters():
                 param.requires_grad = False
 
-        #only useful if model is already frozen. Unfreezes the last n layers
+        # only useful if model is already frozen. Unfreezes the last n layers
         if unfreeze_last > 0:
             for param in features.features[unfreeze_last].parameters():
                 param.requires_grad = True
         self.features = features
         self.latent_vector = nn.Linear(1645, latent_vector_size)
-    
+
     def forward(self, x):
         x = self.features(x)
         x = self.latent_vector(x)
         x = F.relu(x)
         return x
 
+
 class SATDecoder(nn.Module):
-    """ Show, Attend, and Tell Decoder. For this we use an LSTM model to process the features
-    
-    """
-    def __init__(self, latent_vector_size:int, attention:Optional[nn.Module] = None) -> typing.NoReturn:
+    """Show, Attend, and Tell Decoder. For this we use an LSTM model to process the features"""
+
+    def __init__(self, latent_vector_size: int, attention: Optional[nn.Module] = None) -> typing.NoReturn:
         super().__init__()
         raise NotImplementedError
-    
+
     def forward(self, x):
         raise NotImplementedError
+
 
 class BayesianSATDecoder(nn.Module):
     def __init__(self) -> None:
         super().__init__()
         raise NotImplementedError
+
     def forward(self, x):
         raise NotImplementedError

@@ -5,10 +5,8 @@ following should be implemented
  - Child Class that performs data augmentation on Flicker30K dataset
 """
 
-from data.data import FlickerDataset
 
-class AugmentedFlickerDataset():
+class AugmentedFlickerDataset:
     def __init__(self) -> None:
         super().__init__()
         raise NotImplementedError
-
