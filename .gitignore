@@ -1,3 +1,5 @@
+_build/
+_static/
 build/
 .python-version
 flickr30k/*.jpg

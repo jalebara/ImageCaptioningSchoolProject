@@ -13,30 +13,36 @@ At the end of the project, this module should contain the following:
 
 import torch.nn as nn
 
+
 class Encoder(nn.Module):
     def __init__(self) -> None:
         super().__init__()
         raise NotImplementedError
+
 
 class Decoder(nn.Module):
     def __init__(self) -> None:
         super().__init__()
         raise NotImplementedError
 
+
 class MeshedMemoryTransformer(nn.Module):
     def __init__(self) -> None:
         super().__init__()
         raise NotImplementedError
+
 
 class BayesianEncoder(nn.Module):
     def __init__(self) -> None:
         super().__init__()
         raise NotImplementedError
 
+
 class BayesianDecoder(nn.Module):
     def __init__(self) -> None:
         super().__init__()
         raise NotImplementedError
+
 
 class BayesianMeshedMemoryTransformer(nn.Module):
     def __init__(self) -> None:

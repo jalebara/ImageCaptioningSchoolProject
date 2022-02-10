@@ -1,4 +1,7 @@
 torch
 torchvision
+torchtext
 pandas
 numpy
+sklearn
+opencv-python
