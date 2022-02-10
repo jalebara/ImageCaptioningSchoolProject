@@ -1,2 +1,7 @@
 build/
 .python-version
+flickr30k/*.jpg
+flickr30k/results_20130124.token
+flickr30k/readme.txt
+*~
+'#*
