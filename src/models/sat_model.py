@@ -68,16 +68,29 @@ class SATDecoder(nn.Module):
     """Show, Attend, and Tell Decoder. For this we use an LSTM model to process the features
     
     This part of the model requires some additional work. According to the Show, Attend, and Tell paper,
-    the decoder is composed of multiple parts: an MLP for initializing :math:`h_0`, an MLP for initializing :math:`c_0`
+    the decoder is composed of multiple parts: an MLP for initializing :math:`h_0`, an MLP for initializing :math:`c_0`, 
+    an attention model, and a LSTM. To implement these components, we use a single Linear layer to represent the MLPs 
+    encoding the initial hidden and memory state, an attention model following the specifications of the paper,
+    and a LSTM Cell.  
+    
     """
 
-    def __init__(self, latent_vector_size: int, hidden_size:int, attention: Optional[nn.Module] = None) -> typing.NoReturn:
+    def __init__(self, encoder_size:int, embedding_size:int, vocabulary_size:int, hidden_size:int, attention: Optional[nn.Module] = None, dropout_rate:float=0.5) -> typing.NoReturn:
         super().__init__()
-        reccurent = nn.LSTM(latent_vector_size, hidden_size)
-        if attention is not None:
-            self.model = nn.Sequential([attention, reccurent])
-        else:
-            self.model = reccurent
+
+        #Initializer MLPs
+        self.fh = nn.Linear(256,256)
+        self.fc = nn.Linear(256,256)
+        self.fβ = nn.Linear(256, 256)
+    
+    def initialize_weights(self):
+        raise NotImplementedError
+    def initialize_hidden_states(self, encoded):
+        mean =  encoded.mean(dim=1) # row wise mean to get the average a_i vector
+        h = self.fh(mean)
+        c = self.fc(mean)
+        return h, c
+    
     def forward(self, x):
         return self.model(x)
 
