@@ -7,7 +7,6 @@ following should be implemented
 
 from torchvision.datasets import Flickr30k
 import torchvision.transforms as transforms
-from PIL import Image
 
 class AugmentedFlickrDataset(Flickr30k):
     def __init__(self, root="../../flickr30k", annotations_file="../../flickr30k/results_20130124.token") -> None:
