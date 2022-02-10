@@ -5,8 +5,9 @@ following should be implemented
  - Child Class that performs data augmentation on Flicker30K dataset
 """
 
+from torchvision.datasets import Flickr30k
+import torchvision.transforms as transforms
 
-class AugmentedFlickerDataset:
-    def __init__(self) -> None:
-        super().__init__()
-        raise NotImplementedError
+class AugmentedFlickrDataset(Flickr30k):
+    def __init__(self, root="../../flickr30k", annotations_file="../../flickr30k/results_20130124.token") -> None:
+        super().__init__(root, annotations_file, transform=transforms.Resize([224, 224]))
