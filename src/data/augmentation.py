@@ -7,6 +7,7 @@ following should be implemented
 
 from torchvision.datasets import Flickr30k
 import torchvision.transforms as transforms
+from torch import float32
 
 class AugmentedFlickrDataset(Flickr30k):
     def __init__(self,
@@ -30,10 +31,28 @@ class AugmentedFlickrDataset(Flickr30k):
         super().__init__(root,
                          annotations_file,
                          transform=transforms.Compose([
-                             # Convert to tensor
-                             transforms.ToTensor(),
+                             # Convert to tensor, uint8_t [0, 255]
+                             transforms.PILToTensor(),
                              transforms.Resize(resize),
                              transforms.RandomAffine(degrees=degrees, translate=translate),
                              transforms.GaussianBlur(kernel_size=blur_kernel_mean, sigma=blur_kernel_std),
-                             transforms.ColorJitter(brightness=brightness_factor)
-                             ]))
+                             transforms.ColorJitter(brightness=brightness_factor),
+                             # Convert to tensor, float [0.0, 255.0]
+                             #transforms.ConvertImageDtype(float32)
+                             ])
+                         )
+
+    # EfficientNet requires a float tensor with intensities of [0.0, 255.0]
+    # AFAIK, Pytorch doesn't have a transform that can accomplish this
+    # Closest thing is ConvertImageDtype but that autoscales floats to [0.0, 1.0]
+    # Hence, this function has to be created I guess
+    # If we continue with this format, we can rewrite self.__getitem__ to just
+    # return the value of this function so we can access items with array syntax
+    def getItemInEfficientNetFormat(self, index):
+        # Tuples are immutable so convert to string
+        item = list(super().__getitem__(index))
+        # item[0] is the image itself (rest are annotations), converts to float
+        item[0] = item[0].float()
+        # Return converted to tuple
+        return tuple(item)
+            
