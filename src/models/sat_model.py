@@ -18,25 +18,28 @@ import torch.nn.functional as F
 import torchvision.models as models
 import typing
 from typing import Optional
-from utils import ModelComposition
 
 START_TOKEN_VALUE = 1
+
 
 class SATAttention(nn.Module):
     def __init__(self) -> None:
         super().__init__()
         raise NotImplementedError
+
     def forward(self, x):
         raise NotImplementedError
 
+
 class SATEncoder(nn.Module):
     """Show, Attend, and Tell encoder. For this project, we will use EfficientNet with ImageNet weights
-    
-    This part of the model is fairly simple, we take the convolutional outputs of the feature extraction 
-    network, then resize it to the required size for the decoder. We guaruntee the size of the output using 
-    an AdaptiveAveragePool. Given the small size of the dataset, it is prudent here to use a pretrained model, 
-    and remove the linear layers. 
+
+    This part of the model is fairly simple, we take the convolutional outputs of the feature extraction
+    network, then resize it to the required size for the decoder. We guaruntee the size of the output using
+    an AdaptiveAveragePool. Given the small size of the dataset, it is prudent here to use a pretrained model,
+    and remove the linear layers.
     """
+
     def __init__(
         self,
         pretrained: bool = True,
@@ -48,7 +51,6 @@ class SATEncoder(nn.Module):
 
         # remove classifier at the top of the model
         features = nn.Sequential(*(list(features.children())[:-2]))
-        self.flatten = nn.Flatten()
         # freeze model parameters
         if freeze:
             for param in features.parameters():
@@ -60,14 +62,14 @@ class SATEncoder(nn.Module):
                 param.requires_grad = True
         self.features = features
 
-    def forward(self, x:torch.Tensor):
+    def forward(self, x: torch.Tensor, *args):
         """Implements the forward pass of the encoder
         In the paper, the convolutional feature extractor produced :math:`L` vectors,
         each of whic is a D-Dimensional representation corresponding to the image.
         .. math::
             a\,=\,\{a_1, \dots, a_L\}, a_i ∈ \\mathbb{R}^D
-        
-        In practice the convolutional network returns a 3-tensor for each entry in the batch. 
+
+        In practice the convolutional network returns a 3-tensor for each entry in the batch.
         In the decoder, we'll convert this 3 tensor in to a set of annotation vectors as
         described in the paper.
         Args:
@@ -75,91 +77,100 @@ class SATEncoder(nn.Module):
         Returns:
             torch.Tensor : encoded image tensor of shape (batch_size, 1280, imag_size//32, image_size//32)
         """
-        x = self.features(x) # (batch_size, 1280, image_size//32, image_size//32 )
-        return x
+        x = self.features(x)  # (batch_size, 1280, image_size//32, image_size//32 )
+        return x, *args  # pass encoded values and additional arguments to next layer
 
 
 class SATDecoder(nn.Module):
     """Show, Attend, and Tell Decoder. For this we use an LSTM model to process the features
-    
+
     This part of the model requires some additional work. According to the Show, Attend, and Tell paper,
-    the decoder is composed of multiple parts: an MLP for initializing :math:`h_0`, an MLP for initializing :math:`c_0`, 
-    an attention model, and a LSTM. To implement these components, we use a single Linear layer to represent the MLPs 
+    the decoder is composed of multiple parts: an MLP for initializing :math:`h_0`, an MLP for initializing :math:`c_0`,
+    an attention model, and a LSTM. To implement these components, we use a single Linear layer to represent the MLPs
     encoding the initial hidden and memory state, an attention model following the specifications of the paper,
-    and a LSTM Cell.  
-    
+    and a LSTM Cell.
+
     """
 
-    def __init__(self, embedding_size:int, vocabulary_size:int, hidden_size:int, encoder_size:int=1280,attention: Optional[nn.Module] = None, device:str="cpu") -> typing.NoReturn:
+    def __init__(
+        self,
+        embedding_size: int,
+        vocabulary_size: int,
+        hidden_size: int,
+        attention: nn.Module,
+        encoder_size: int = 1280,
+        device: str = "cpu",
+    ) -> typing.NoReturn:
         super().__init__()
 
-        #constants
+        # constants
         self.vocab_size = vocabulary_size
         self._device = device
 
         # Adding attention mechanism
         self.attention = attention
-        
+
         # MLPs for initializing states
-        self.fh = nn.Linear(encoder_size, hidden_size) # Hidden State Initializer
-        self.fc = nn.Linear(encoder_size, hidden_size) # Memory Cell intializer
-        
+        self.fh = nn.Linear(encoder_size, hidden_size)  # Hidden State Initializer
+        self.fc = nn.Linear(encoder_size, hidden_size)  # Memory Cell intializer
+
         # Gate MLP
-        self.fβ = nn.Linear(hidden_size, encoder_size) #
+        self.fβ = nn.Linear(hidden_size, encoder_size)  #
         self.σ = nn.Sigmoid()
-        
+
         # MLP for getting vocabulary scores
         self.score_vocab = nn.Linear(hidden_size, vocabulary_size)
 
-        #Embedding Layer
+        # Embedding Layer
         self.embedding = nn.Embedding(vocabulary_size, embedding_size)
 
-        #LSTM
+        # LSTM
         self.recurrent = nn.LSTMCell(embedding_size + encoder_size, hidden_size, bias=True, batch_first=True)
 
         # Teacher Forcing Rate
         self._teacher_forcing_rate = 1
-    
-    def update_scheduled_sampling_rate(self, convergence_rate:float) -> typing.NoReturn:
-        """Updates the scheduled sampling rate linearly
-        """
+
+    def update_scheduled_sampling_rate(self, convergence_rate: float) -> typing.NoReturn:
+        """Updates the scheduled sampling rate linearly"""
         if self._teacher_forcing_rate <= 0:
             return
-        self._teacher_forcing_rate -= convergence_rate # linear ramp clipped at zero
-        
-    def initialize_hidden_states(self, encoded:torch.Tensor) -> tuple:
-        mean =  encoded.mean(dim=1) # row wise mean to get the average a_i vector
+        self._teacher_forcing_rate -= convergence_rate  # linear ramp clipped at zero
+
+    def initialize_hidden_states(self, encoded: torch.Tensor) -> tuple:
+        mean = encoded.mean(dim=1)  # row wise mean to get the average a_i vector
         h = self.fh(mean)
         c = self.fc(mean)
         return h, c
-    
-    def forward(self, x:torch.Tensor, captions:torch.Tensor, lengths:torch.Tensor, scheduled_sampling:bool=False) -> tuple:
-        """ Implements the forward  step of the decoder network.
 
-        The LSTM hidden and memory weights are initialized using an MLP operating 
-        on the mean of the annotation vectors. 
-        
+    def forward(
+        self, x: torch.Tensor, captions: torch.Tensor, lengths: torch.Tensor, scheduled_sampling: bool = False
+    ) -> tuple:
+        """Implements the forward  step of the decoder network.
+
+        The LSTM hidden and memory weights are initialized using an MLP operating
+        on the mean of the annotation vectors.
+
         The LSTMCell performs the following
-        
+
         .. math::
 
             i_t &= \\sigma ( W_i Ey_{t-1} + U_i h_{t-1} + Z_i \hat{z} + b_i )
-            
-            f_t &= \\sigma ( W_f Ey_{t-1} + U_f h_{t-1} Z_f \hat{z}_t + b_f )
-            
-            c_t &= f_t c_{t-1} + i_t \\tanh ( W_c Ey_{t-1} + U_c h_{t-1} + Z_c \hat{z}_t + b_c )
-            
-            o_t &= \\sigma ( W_o Ey_{t-1} + U_o h_{t-1} + Z_0 \\hat{z}_t + b_o )
-            
-            h_t &= o_t \\tanh (c _t) 
 
-        
-        where the input, forget, memory, output and hidden state of the LSTM are represented by the 
-        preceding equations, respectively. W, U, and Z are weights matrices, and the E matrices are the 
+            f_t &= \\sigma ( W_f Ey_{t-1} + U_f h_{t-1} Z_f \hat{z}_t + b_f )
+
+            c_t &= f_t c_{t-1} + i_t \\tanh ( W_c Ey_{t-1} + U_c h_{t-1} + Z_c \hat{z}_t + b_c )
+
+            o_t &= \\sigma ( W_o Ey_{t-1} + U_o h_{t-1} + Z_0 \\hat{z}_t + b_o )
+
+            h_t &= o_t \\tanh (c _t)
+
+
+        where the input, forget, memory, output and hidden state of the LSTM are represented by the
+        preceding equations, respectively. W, U, and Z are weights matrices, and the E matrices are the
         embedding matrices. The :math:`\\hat{z}` vectors are the context vectors generated by the product of
         the annotation and the :math:`\\alpha` weights generated by the attention model.
 
-        First, the encoder outputs are embedded into the learned embedding. This is represented in the 
+        First, the encoder outputs are embedded into the learned embedding. This is represented in the
         :math:`Ey_{t-1}` variables. The hidden and memory states are intialized by passing the mean
         of the annotations vector to MLPs. These actions are represented in the following equations.
 
@@ -171,7 +182,7 @@ class SATDecoder(nn.Module):
         Then for every token in the embedded sequence, the next state of the LSTM is determined by the equations
         describing the LSTM. In the paper, the data is batched into captions of the same length. It's easier to
         just load them randomly and stop processing on the <pad> tokens. Additionaly, we implement scheduled sampling
-        which is an extension of the Teacher Forcing algorithm. The salient point here is that the model is fed the ground 
+        which is an extension of the Teacher Forcing algorithm. The salient point here is that the model is fed the ground
         truth from the previous time step at a decreasing rate as the model converges. For simplciity, we implement
         a linear ramp for the rate of teacher forcing.
 
@@ -179,74 +190,78 @@ class SATDecoder(nn.Module):
             x (torch.Tensor): A encoded image of shape (batch_size, 1280, image_size//32, image_size//32)
             lengths (list): The lengths of the captions
         Returns:
-            tuple: 
+            tuple:
         """
         batch_size = x.size(0)
         encoded_size = x.size(1)
         vocab_size = self.vocab_size
 
-        # Reshape encoded image into a set of annotation vectors. 
+        # Reshape encoded image into a set of annotation vectors.
         # we can compress the image into a vector and treat 1280 as the number of annotation vectors
         x = x.view(batch_size, encoded_size, -1)
 
         # The LSTM expects tensors in (batch_ size, sequence length, number of sequences)
-        x = x.permute(0,2,1)
+        x = x.permute(0, 2, 1)
 
         # initialize hidden states
         h, c = self.initialize_hidden_states(self, x)
 
         # sort the captions and apply sort to encodings and captions
-        lengths, idx = lengths.squeeze(1).sort(dim=0, descending=True) # sort captions in descending order
-        lengths = (lengths - 1).tolist() 
+        lengths, idx = lengths.squeeze(1).sort(dim=0, descending=True)  # sort captions in descending order
+        lengths = (lengths - 1).tolist()
         x = x[idx]
         captions = captions[idx]
 
         # embed the ground truth for teacher forcing
-        embedded_captions = self.embedding(captions) # (batch_size, caption_length, embedding dim)
+        embedded_captions = self.embedding(captions)  # (batch_size, caption_length, embedding dim)
 
         # our predictions will be the size of the largest encoding (batch_size, largest_encoding, vocab_size)
         # each entry of this tensor will have a score for each batch entry, position in encoding, and vocabulary word candidate
-        predictions = torch.zeros(batch_size, max(lengths), vocab_size).to(self._device) #predictions
-        αs = torch.zeros(batch_size, max(lengths), ) # attention generated weights stored for Doubly Stochastic Regularization
-        prev_scores = torch.ones((batch_size, encoded_size)) * START_TOKEN_VALUE # first token is always <start>
+        predictions = torch.zeros(batch_size, max(lengths), vocab_size).to(self._device)  # predictions
+        αs = torch.zeros(
+            batch_size,
+            max(lengths),
+        )  # attention generated weights stored for Doubly Stochastic Regularization
+        prev_scores = torch.ones((batch_size, encoded_size)) * START_TOKEN_VALUE  # first token is always <start>
         for i in range(max(lengths)):
             # For each token, determine if we apply teacher forcing
-            if scheduled_sampling and np.random.uniform(0,1) > self._teacher_forcing_rate:
+            if scheduled_sampling and np.random.uniform(0, 1) > self._teacher_forcing_rate:
                 if i > max(lengths):
-                    break # no more captions left at requested size
+                    break  # no more captions left at requested size
                 # compute the effective batch size from caption lengths
-                eff_batch_size = sum([ l > i for l in lengths])# compute effective batch size for specified lengths
+                eff_batch_size = sum([l > i for l in lengths])  # compute effective batch size for specified lengths
                 # In teacher forcing we know which captions have a specified length, so we can reduce wasteful
                 # computation by only applying the model on valid captions
                 zhat, α = self.attention(x[:eff_batch_size], h[:eff_batch_size])
-                gate = self.σ(self.fβ(h[:eff_batch_size])) # here we compute the gating scalar
-                zhat = gate * zhat # (eff_batch_size, encoding_size)
+                gate = self.σ(self.fβ(h[:eff_batch_size]))  # here we compute the gating scalar
+                zhat = gate * zhat  # (eff_batch_size, encoding_size)
                 # get the next hidden state and memory state of the lstm
                 h, c = self.recurrent(
                     # conditioning the LSTM on the previous state's ground truth.
                     # On i=0 this is just the start token
                     torch.cat([embedded_captions[:eff_batch_size, i, :], zhat], dim=1),
                     # truncated hidden and memory states
-                    (h[:eff_batch_size], c[:eff_batch_size])
+                    (h[:eff_batch_size], c[:eff_batch_size]),
                 )
-                scores = self.score_vocab(h) # assign a score to potential vocabulary candidtates
+                scores = self.score_vocab(h)  # assign a score to potential vocabulary candidtates
                 predictions[:eff_batch_size, i, :] = scores
                 αs[:eff_batch_size, i, :] = α
             else:
                 # No teacher forcing done here. We just do the standard LSTM calculations
-                zhat, α = self.attention(x, h) 
+                zhat, α = self.attention(x, h)
                 gate = self.σ(self.fβ(h))
-                zhat = gate * zhat # (batch_size, encoding_size)
+                zhat = gate * zhat  # (batch_size, encoding_size)
                 h, c = self.recurrent(
                     # Conditioning on previous predicted scores
                     torch.cat([prev_scores, zhat], dim=1),
-                    (h,c)
+                    (h, c),
                 )
                 scores = self.score_vocab(h)
-                predictions[:,i,:] = scores
-                αs[:,i,:] = α
+                predictions[:, i, :] = scores
+                αs[:, i, :] = α
             prev_scores = scores
-        return predictions
+        return predictions, αs, embedded_captions, idx
+
 
 class BayesianSATDecoder(nn.Module):
     def __init__(self) -> None:
@@ -255,13 +270,3 @@ class BayesianSATDecoder(nn.Module):
 
     def forward(self, x):
         raise NotImplementedError
-
-
-if __name__ == "__main__":
-    import numpy as np
-    test_in = torch.tensor(np.random.uniform(0,255,(1,3,224,224))).float()
-    model = SATEncoder()
-    print(model)
-    test_out = model(test_in)
-    print(test_in.size())
-    print(test_out.size())

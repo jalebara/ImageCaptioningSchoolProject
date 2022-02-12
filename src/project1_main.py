@@ -11,6 +11,8 @@ from models.sat_model import SATDecoder, SATEncoder
 
 RESULTS_DIRECTORY = "../results/project1"
 
+EPOCHS = 20
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser("Project 1 Main Experiment")
@@ -20,10 +22,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--transfer_weights", action="store_true", required=False
     )  # use transfer learning for SAT Model
-    parser.add_argument("--augment_data", action="store_true", required=False)  # set option to augment data
-    parser.add_argument("--freeze_encoder", action="store_true", required=False)
+    parser.add_argument(
+        "--augment_data", action="store_true", default=False, required=False
+    )  # set option to augment data
+    parser.add_argument("--freeze_encoder", action="store_true", default=False, required=False)
     parser.add_argument("--unfreeze_last", action="store", type=int, default=0, required=False)
     parser.add_argument("--data_directory", action="store", type=str, required=True)
+    parser.add_argument("--smoke_test", action="store_true", type=bool, default=False, required=False)
     return parser.parse_args()
 
 
