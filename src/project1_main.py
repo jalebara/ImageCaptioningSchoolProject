@@ -8,11 +8,15 @@ import os
 from os.path import join
 from models.utils import load_model_dict, save_model_dict
 from models.sat_model import SATDecoder, SATEncoder
+import torch
 
 RESULTS_DIRECTORY = "../results/project1"
 
 EPOCHS = 20
-
+EMBED = 1024
+ATTENTION = 1024
+DECODER = 1024
+DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser("Project 1 Main Experiment")
@@ -31,7 +35,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--smoke_test", action="store_true", type=bool, default=False, required=False)
     return parser.parse_args()
 
-
+def train_model():
+    raise NotImplementedError
+def evaluate_model():
+    raise NotImplementedError
 def main():
     """Main experiment
     The following describes the pipeline:
@@ -45,7 +52,10 @@ def main():
     7. Generate Class Activation maps on the best performing test set images
     """
 
+    # parse arguments 
     args = parse_args()
+
+    # create results directory
     if not os.path.exists(RESULTS_DIRECTORY):
         os.mkdir(RESULTS_DIRECTORY)
     best_checkpoint_path = join(
@@ -54,8 +64,8 @@ def main():
     )
 
     # Construct Model
-    encoder = SATEncoder(1024, pretrained=args.transfer_weights, unfreeze_last=args.unfreeze_last)
-    decoder = SATDecoder(1024)
+    encoder = SATEncoder(pretrained=args.transfer_weights, freeze=args.freeze_encoder, unfreeze_last=args.unfreeze_last)
+    decoder = SATDecoder()
 
     # Load data
     if args.augment_data:
