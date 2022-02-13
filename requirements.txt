@@ -5,3 +5,5 @@ pandas
 numpy
 sklearn
 opencv-python
+ipykernel
+nltk
