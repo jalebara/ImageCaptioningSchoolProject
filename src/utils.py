@@ -4,6 +4,7 @@ import torch.nn as nn
 import typing
 from tqdm import tqdm
 from time import time
+import numpy as np
 
 
 class ModelComposition(nn.Module):
@@ -20,7 +21,7 @@ class ModelComposition(nn.Module):
 class AverageMeter(object):
     """Simple class to compute a running average of some tracked value and can be printed"""
 
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str="mean") -> None:
         self._name = name
         self._sum = 0
         self._count = 0
@@ -36,53 +37,42 @@ class AverageMeter(object):
         return f"{self._name}: {self.get_average():.4f}"
 
 
-class Trainer(object):
-    """Defines a simple model training class
-    This class should run a training loop, track average training losses,
-    calculate remaining time for training, and log losses and metrics on tensorboard
-    """
-
+class EarlyStopping(object):
     def __init__(
         self,
-        train_func: typing.Callable,
-        val_func: typing.Callable,
-        epochs: int,
-        optimizer,
-        criterion,
-        train_dataloader,
-        val_dataloader,
-        device: str = "cpu",
+        checkpoint_path: str,
+        delta: float = 0.01,
+        mode: str = "max",
+        patience: int = 4,
+        report_func: typing.Callable = print,
     ) -> None:
-        self._train = train_func
-        self._validate = val_func
-        self._epochs = epochs
-        self._optimizer = optimizer
-        self._trainloader = train_dataloader
-        self._valloader = val_dataloader
-        self._criterion = criterion
-        self._validation_results = []
+        self.patience = patience
+        self.checkpoint = checkpoint_path
+        self.mode = mode
+        self.counter = 0
+        self.delta = delta
+        self.report = report_func
+        self.stop = False
+        self.best_metric = np.inf if mode == "min" else -np.inf
 
-    def training_loop(self, model) -> typing.NoReturn:
-        average_time = AverageMeter()
-        for i in range(self._epochs):
-            train_loss = AverageMeter()
-            average_time = AverageMeter()  # average time in seconds
-            start = time()
-            metrics = {}
-            for x, y in tqdm(self._trainloader, desc=f"Epoch {i+1} Train Progress "):
-                tl = self._train(model, x, y, self._criterion, self._optimizer)
-                train_loss.update(tl)
-                metrics["train_loss"] = train_loss.get_average()
-            for x, y in tqdm(self._valloader, desc=f"Epoch {i+1} validation_progress "):
-                m = self._validate(model, x, y, self._criterion)
-                metrics.update(m)
-            average_time.update(time() - start)
-            estimated_time_remaining = (self._epochs - i - 1) * average_time.get_average()
+    def __call__(self, metric: float, state: dict):
+
+        if self.mode == "min":
+            metric = -metric
+
+        if self.best_metric + self.delta > metric:
+            self.counter += 1
+            self.report(f"Model did not improve {self.counter}/{self.patience}")
+            if self.counter >= self.patience:
+                self.stop = True
+        elif self.best_metric + self.delta < metric:
+            torch.save(state, self.checkpoint)
+            counter = 0
 
 
 def calc_time(t: float) -> str:
     hours = int(t) // 3600
-    minutes = (t - hours * 3600) // 60
+    minutes = int(t - hours * 3600) // 60
     seconds = int(t - hours * 3600 - minutes * 60)
     return f"{hours}h{minutes}m{seconds}s"
 

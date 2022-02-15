@@ -5,6 +5,7 @@ following should be implemented
  - Child Class that performs data augmentation on Flicker30K dataset
 """
 from collections import defaultdict
+import numpy as np
 import exdir
 from tqdm import tqdm
 import torch
@@ -12,31 +13,51 @@ from torchvision.datasets import VisionDataset
 import torchvision.transforms as transforms
 from torch import float32
 from typing import Any, Callable, Optional, Tuple
+from multiprocessing import Pool
+
+def load_metadata(path, key, mode):
+    archive = exdir.File(path, mode="r")
+    archive = archive.require_group(mode)
+    return {key: archive[key].attrs["captions"]}, {key: archive[key].attrs["lengths"]}
 
 class Flickr30k(VisionDataset):
-    """
-    """
+    """ """
 
     def __init__(
-            self,
-            root: str="../../flickr30k,
-            transform: Optional[Callable] = None,
-            target_transform: Optional[Callable] = None,
-            mode:str="test",
-            smoke_test=False
+        self,
+        root: str = "../../flickr30k",
+        transform: Callable = transforms.Compose(
+            [
+                transforms.ConvertImageDtype(float32),
+                transforms.Resize((224,224)),
+            ]
+        ),
+        target_transform: Optional[Callable] = None,
+        mode: str = "test",
+        smoke_test=False,
     ) -> None:
-        super(Flickr30k, self).__init__(root, transform=transform,
-                                        target_transform=target_transform)
+        super(Flickr30k, self).__init__(root, transform=transform, target_transform=target_transform)
         archive = exdir.File(root, mode="r")
         self.archive = archive.require_group(mode)
         data_keys = list(self.archive.keys())
         if smoke_test:
-            data_keys = data_keys[:100]
+            data_keys = data_keys[:10]
         # Read tokenized captions and store in dict
         self.annotations = defaultdict(list)
-        for key in tqdm(data_keys, desc=f"Loading {mode} Captions"):
-            self.annotations[key] = self.archive[key].attrs["captions"]
+        self.lengths = defaultdict(list)
+
+        with Pool(processes=10) as pool:
+            zx =  list(zip([root for _ in range(len(data_keys))], data_keys, [mode for _ in range(len(data_keys))]))
+            jobs = [pool.apply_async(func=load_metadata, args=(*argument,))  for argument in zx]
+            result_list_tqdm = []
+            for job in tqdm(jobs, desc=f"Loading {mode} data"):
+                a, l = job.get()
+                self.annotations.update(a)
+                self.lengths.update(l)
         self.ids = list(sorted(self.annotations.keys()))
+        self.word_map = archive.attrs["word_map"].to_dict()
+        self.max_cap_len = archive.attrs["max_cap_len"]
+
 
     def __getitem__(self, index: int) -> Tuple[Any, Any]:
         """
@@ -46,24 +67,27 @@ class Flickr30k(VisionDataset):
         Returns:
             tuple: Tuple (image, target). target is a list of captions for the image.
         """
-        img_id = self.ids[index]
+        img_id = self.ids[index//5]
 
         # Image
-        img = torch.Tensor(self.archive[img_id][:])/255.
-        img = img.permute(2,0,1)
+        img = torch.Tensor(np.copy(self.archive[img_id][:])) / 255.0
+        img = img.permute(2, 0, 1)
         if self.transform is not None:
             img = self.transform(img)
 
         # Captions
-        target = self.annotations[img_id]
-        target = torch.Tensor(target)
+        target = self.annotations[img_id][ index % 5 ]
+        target = torch.Tensor(target).long()
         if self.target_transform is not None:
             target = self.target_transform(target)
 
-        return img*255, target
+        # Caption lengths
+        lengths = self.lengths[img_id][ index % 5 ]
+        lengths = torch.Tensor([lengths]).long()
+        return img * 255, target, lengths, torch.Tensor(self.annotations[img_id]).long()
 
     def __len__(self) -> int:
-        return len(self.ids)
+        return len(self.ids)*5
 
 
 class AugmentedFlickrDataset(Flickr30k):
@@ -85,7 +109,7 @@ class AugmentedFlickrDataset(Flickr30k):
         brightness_factor=0.5,
         # mode
         mode="test",
-        smoke_test=False
+        smoke_test=False,
     ) -> None:
         super().__init__(
             root,
@@ -101,7 +125,7 @@ class AugmentedFlickrDataset(Flickr30k):
                 ]
             ),
             mode=mode,
-            smoke_test=smoke_test
+            smoke_test=smoke_test,
         )
 
     # EfficientNet requires a float tensor with intensities of [0.0, 255.0]
@@ -111,5 +135,4 @@ class AugmentedFlickrDataset(Flickr30k):
     # If we continue with this format, we can rewrite self.__getitem__ to just
     # return the value of this function so we can access items with array syntax
     def __getitem__(self, index):
-        img, caps = super().__getitem__(index)
-        return img, caps
+        return super().__getitem__(index)

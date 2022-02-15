@@ -12,14 +12,16 @@ import nltk
 import numpy as np
 import os
 from tqdm import tqdm
-from data.augmentation import  Flickr30k
+from torchvision.datasets import Flickr30k
 
 TOPK = 2000
 
-def parse_args()->argparse.Namespace:
+
+def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--flickr_dir", action="store")
     return parser.parse_args()
+
 
 def main():
     args = parse_args()
@@ -36,14 +38,14 @@ def main():
     train_archive = archive.require_group("train")
     valid_archive = archive.require_group("valid")
     test_archive = archive.require_group("test")
-    
+
     img_ids = dataset.ids
-    train_ids = img_ids[:int(len(img_ids)*0.8)]
-    val_ids = img_ids[int(len(img_ids)*0.8):int(len(img_ids)*0.8)+ int(len(img_ids)*0.15)]
-    test_ids = img_ids[int(len(img_ids)*0.8)+int(len(img_ids)*0.15):]
+    train_ids = img_ids[: int(len(img_ids) * 0.8)]
+    val_ids = img_ids[int(len(img_ids) * 0.8) : int(len(img_ids) * 0.8) + int(len(img_ids) * 0.15)]
+    test_ids = img_ids[int(len(img_ids) * 0.8) + int(len(img_ids) * 0.15) :]
     train_captions = defaultdict(list)
     val_captions = defaultdict(list)
-    test_captions =defaultdict(list)
+    test_captions = defaultdict(list)
 
     print(f"# Train Examples {len(train_ids)}")
     print(f"# Validation Examples {len(val_ids)}")
@@ -64,7 +66,7 @@ def main():
         else:
             store = test_archive
             cap_store = test_captions
-        #store.require_dataset(img_id, data=image)
+        store.require_dataset(img_id, data=image)
         for cap in captions:
             cap_store[img_id].append(cap)
             tokens = nltk.tokenize.word_tokenize(cap.lower())
@@ -72,18 +74,18 @@ def main():
                 max_caption_length = len(tokens)
             for toke in tokens:
                 words[toke] += 1
-    max_caption_length += 2 # take start and end token into account
-    
+    max_caption_length += 2  # take start and end token into account
+
     # build token-map
     word_freqs = [(k, v) for k, v in words.items()]
-    word_freqs.sort(key=lambda x : x[1], reverse=True)
-    topk = word_freqs[:TOPK] # We select top K words to be the model's vocabulary
-    topk = [w for w, _ in topk] # only care about the words
-    token_map = {token:i for i, token in enumerate(topk)}
-    token_map["<start>"] = len(token_map)
-    token_map["<end>"] = len(token_map)
-    token_map["<unc>"] = len(token_map)
-    token_map["<pad>"] = len(token_map)
+    word_freqs.sort(key=lambda x: x[1], reverse=True)
+    topk = word_freqs[:TOPK]  # We select top K words to be the model's vocabulary
+    topk = [w for w, _ in topk]  # only care about the words
+    token_map = {token: i + 4 for i, token in enumerate(topk)}
+    token_map["<start>"] = 1
+    token_map["<end>"] = 2
+    token_map["<unc>"] = 3
+    token_map["<pad>"] = 0
 
     # store tokens for dataset
     for img_id in tqdm(img_ids, desc="Processing Captions"):
@@ -97,8 +99,10 @@ def main():
             store = test_archive
             cap_store = test_captions
         tokenized_captions = []
+        lengths = []
         for cap in cap_store[img_id]:
             tokens = nltk.tokenize.word_tokenize(cap.lower())
+            lengths.append(len(tokens))
             # replace uncommon words
             res = copy.copy(tokens)
             for i, toke in enumerate(tokens):
@@ -110,13 +114,16 @@ def main():
             res.insert(0, token_map["<start>"])
 
             # ensure equal length for all captions
-            while len(res) < max_caption_length: 
+            while len(res) < max_caption_length:
                 res.append(token_map["<pad>"])
             tokenized_captions.append(res)
 
         # store caption
         store[img_id].attrs["captions"] = tokenized_captions
+        store[img_id].attrs["lengths"] = lengths
     archive.attrs["word_map"] = token_map
-             
+    archive.attrs["max_cap_len"] = max_caption_length
+
+
 if __name__ == "__main__":
     main()

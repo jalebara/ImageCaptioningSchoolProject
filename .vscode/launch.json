@@ -1,0 +1,44 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        
+
+        {
+            "name": "Python: Current File",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Test SAT Model",
+            "type": "python",
+            "request": "launch",
+            "program": "/home/jeff-laptop/Code/school/ece763/class_project/ECE763-Class-Project-Image-Captioning/src/project1_main.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--smoke_test",
+                "--freeze_encoder",
+                "--data_directory", "/home/jeff-laptop/Code/school/ece763/class_project/ECE763-Class-Project-Image-Captioning/flickr30k/flickr30k.exdir",
+                "--augment_data",
+                "--skip_evaluation"
+            ]
+        },
+        {
+            "name": "Train SAT Model",
+            "type": "python",
+            "request": "launch",
+            "program": "/home/jeff-laptop/Code/school/ece763/class_project/ECE763-Class-Project-Image-Captioning/src/project1_main.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--freeze_encoder",
+                "--data_directory", "/home/jeff-laptop/Code/school/ece763/class_project/ECE763-Class-Project-Image-Captioning/flickr30k/flickr30k.exdir",
+                "--augment_data",
+                "--skip_evaluation"
+            ]
+        }
+    ]
+}

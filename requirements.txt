@@ -7,3 +7,4 @@ sklearn
 opencv-python
 ipykernel
 nltk
+torchmetrics

@@ -11,6 +11,7 @@ By the end of this project, this module should contain the following
  - Bayesian Decoder Module
 
 """
+from base64 import encode
 import numpy as np
 import torch
 import torch.nn as nn
@@ -18,17 +19,6 @@ import torch.nn.functional as F
 import torchvision.models as models
 import typing
 from typing import Optional
-
-START_TOKEN_VALUE = 1
-
-
-class SATAttention(nn.Module):
-    def __init__(self) -> None:
-        super().__init__()
-        self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
-
-    def forward(self, x):
-        return x, torch.ones(x.size()).to(self.device)
 
 
 class SATEncoder(nn.Module):
@@ -62,7 +52,7 @@ class SATEncoder(nn.Module):
                 param.requires_grad = True
         self.features = features
 
-    def forward(self, x: torch.Tensor, *args):
+    def forward(self, x: torch.Tensor):
         """Implements the forward pass of the encoder
         In the paper, the convolutional feature extractor produced :math:`L` vectors,
         each of whic is a D-Dimensional representation corresponding to the image.
@@ -78,7 +68,7 @@ class SATEncoder(nn.Module):
             torch.Tensor : encoded image tensor of shape (batch_size, 1280, imag_size//32, image_size//32)
         """
         x = self.features(x)  # (batch_size, 1280, image_size//32, image_size//32 )
-        return x, *args  # pass encoded values and additional arguments to next layer
+        return x.permute(0, 2, 3, 1)  # pass encoded values and additional arguments to next layer
 
 
 class SATDecoder(nn.Module):
@@ -95,6 +85,7 @@ class SATDecoder(nn.Module):
         self,
         embedding_size: int,
         vocabulary_size: int,
+        max_caption_size: int,
         hidden_size: int,
         attention: nn.Module,
         encoder_size: int = 1280,
@@ -105,6 +96,7 @@ class SATDecoder(nn.Module):
         # constants
         self.vocab_size = vocabulary_size
         self._device = device
+        self._max_cap_size = max_caption_size
 
         # Adding attention mechanism
         self.attention = attention
@@ -124,7 +116,7 @@ class SATDecoder(nn.Module):
         self.embedding = nn.Embedding(vocabulary_size, embedding_size)
 
         # LSTM
-        self.recurrent = nn.LSTMCell(embedding_size + encoder_size, hidden_size, bias=True, batch_first=True)
+        self.recurrent = nn.LSTMCell(embedding_size + encoder_size, hidden_size, bias=True)
 
         # Teacher Forcing Rate
         self._teacher_forcing_rate = 1
@@ -143,7 +135,11 @@ class SATDecoder(nn.Module):
         return h, c
 
     def forward(
-        self, x: torch.Tensor, captions: torch.Tensor, lengths: torch.Tensor, scheduled_sampling: bool = False
+        self,
+        x: torch.Tensor,
+        captions: torch.Tensor = None,
+        lengths: torch.Tensor = None,
+        scheduled_sampling: bool = False,
     ) -> tuple:
         """Implements the forward  step of the decoder network.
 
@@ -183,7 +179,7 @@ class SATDecoder(nn.Module):
         just load them randomly and stop processing on the <pad> tokens. Additionaly, we implement scheduled sampling
         which is an extension of the Teacher Forcing algorithm. The salient point here is that the model is fed the ground
         truth from the previous time step at a decreasing rate as the model converges. For simplciity, we implement
-        a linear ramp for the rate of teacher forcing. 
+        a linear ramp for the rate of teacher forcing.
 
         Args:
             x (torch.Tensor): A encoded image of shape (batch_size, 1280, image_size//32, image_size//32)
@@ -193,75 +189,66 @@ class SATDecoder(nn.Module):
             tuple:
         """
         batch_size = x.size(0)
-        encoded_size = x.size(1)
+        encoded_size = x.size(-1)
         vocab_size = self.vocab_size
 
         # Reshape encoded image into a set of annotation vectors.
         # we can compress the image into a vector and treat 1280 as the number of annotation vectors
-        x = x.view(batch_size, encoded_size, -1)
+        x = x.view(batch_size, -1, encoded_size)
 
         # The LSTM expects tensors in (batch_ size, sequence length, number of sequences)
-        x = x.permute(0, 2, 1)
+        # x = x.permute(0, 2, 1)
 
         # initialize hidden states
-        h, c = self.initialize_hidden_states(self, x)
+        h, c = self.initialize_hidden_states(x)
 
         if scheduled_sampling:
-            # sort the captions and apply sort to encodings and captions
-            lengths, idx = lengths.squeeze(1).sort(dim=0, descending=True)  # sort captions in descending order
-            lengths = (lengths - 1).tolist()
-            x = x[idx]
-            captions = captions[idx]
-
             # embed the ground truth for teacher forcing
             embedded_captions = self.embedding(captions)  # (batch_size, caption_length, embedding dim)
 
         # our predictions will be the size of the largest encoding (batch_size, largest_encoding, vocab_size)
         # each entry of this tensor will have a score for each batch entry, position in encoding, and vocabulary word candidate
-        predictions = torch.zeros(batch_size, max(lengths), vocab_size).to(self._device)  # predictions
+        predictions = torch.zeros(batch_size, self._max_cap_size, vocab_size).to(self._device)  # predictions
         αs = torch.zeros(
-            batch_size,
-            max(lengths),
+            batch_size, self._max_cap_size, x.size(1)
         )  # attention generated weights stored for Doubly Stochastic Regularization
-        prev_scores = torch.ones((batch_size, encoded_size)) * START_TOKEN_VALUE  # first token is always <start>
-        for i in range(max(lengths)):
+        prev_scores = torch.zeros((batch_size, 1)).long().to(self._device)  # first token is always <start>
+        for i in range(self._max_cap_size):
             # For each token, determine if we apply teacher forcing
-            if scheduled_sampling and np.random.uniform(0, 1) > self._teacher_forcing_rate:
-                if i > max(lengths):
-                    break  # no more captions left at requested size
-                # compute the effective batch size from caption lengths
-                eff_batch_size = sum([l > i for l in lengths])  # compute effective batch size for specified lengths
+            if scheduled_sampling and np.random.uniform(0, 1) < self._teacher_forcing_rate:
                 # In teacher forcing we know which captions have a specified length, so we can reduce wasteful
                 # computation by only applying the model on valid captions
-                zhat, α = self.attention(x[:eff_batch_size], h[:eff_batch_size])
-                gate = self.σ(self.fβ(h[:eff_batch_size]))  # here we compute the gating scalar
+                if i > max(lengths[0]):
+                    break  # no more captions left at requested size
+                zhat, α = self.attention(x, h)
+                gate = self.σ(self.fβ(h))  # here we compute the gating scalar
                 zhat = gate * zhat  # (eff_batch_size, encoding_size)
                 # get the next hidden state and memory state of the lstm
                 h, c = self.recurrent(
                     # conditioning the LSTM on the previous state's ground truth.
                     # On i=0 this is just the start token
-                    torch.cat([embedded_captions[:eff_batch_size, i, :], zhat], dim=1),
+                    torch.cat([embedded_captions[:, i, :], zhat], dim=1),
                     # truncated hidden and memory states
-                    (h[:eff_batch_size], c[:eff_batch_size]),
-                )
-                scores = self.score_vocab(h)  # assign a score to potential vocabulary candidtates
-                predictions[:eff_batch_size, i, :] = scores # append predictions for the i-th token
-                αs[:eff_batch_size, i, :] = α # store attention weights for doubly stochastic regularization
-            else:
-                # No teacher forcing done here. We just do the standard LSTM calculations
-                zhat, α = self.attention(x, h) # apply attention
-                gate = self.σ(self.fβ(h)) # get gate vector
-                zhat = gate * zhat  # (batch_size, encoding_size)
-                h, c = self.recurrent(
-                    # Conditioning on previous predicted scores
-                    torch.cat([prev_scores, zhat], dim=1),
                     (h, c),
                 )
-                scores = self.score_vocab(h) # get vocabulary scores
-                predictions[:, i, :] = scores # append predictions for the i-th token
-                αs[:, i, :] = α # store attention weights for doubly stochastic regularization
-            prev_scores = scores
-        return predictions, αs, embedded_captions, idx
+                scores = self.score_vocab(h)  # assign a score to potential vocabulary candidtates
+                predictions[:, i, :] = scores  # append predictions for the i-th token
+                αs[:, i] = α  # store attention weights for doubly stochastic regularization
+            else:
+                # No teacher forcing done here. We just do the standard LSTM calculations
+                zhat, α = self.attention(x, h)  # apply attention
+                gate = self.σ(self.fβ(h))  # get gate vector
+                zhat = gate * zhat  # (batch_size, encoding_size)
+                embedded = self.embedding(prev_scores)  # condition on zero
+                h, c = self.recurrent(
+                    # Conditioning on previous predicted scores
+                    torch.cat([embedded[:, 0, :], zhat], dim=1),
+                    (h, c),
+                )
+                scores = self.score_vocab(h)  # get vocabulary scores
+                predictions[:, i, :] = scores  # append predictions for the i-th token
+                αs[:, i, :] = α  # store attention weights for doubly stochastic regularization
+        return predictions, αs
 
 
 class BayesianSATDecoder(nn.Module):

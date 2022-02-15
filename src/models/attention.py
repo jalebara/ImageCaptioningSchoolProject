@@ -10,35 +10,43 @@ This module should contain the following
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
-class Attention(nn.Module):
-    def __init__(self, feature_vector_size, intermediate_network_size=100) -> None:
+class SATAttention(nn.Module):
+    def __init__(self, encoder_size: int, hidden_size: int, attention_size: int) -> None:
         super().__init__()
-        self.feature_shaper = nn.Linear(feature_vector_size, intermediate_network_size)
-        self.hidden_state_shaper = nn.Linear(intermediate_network_size, intermediate_network_size)
-        self.attention_model = nn.Linear(intermediate_network_size, feature_vector_size)
-        self.feature_vector_size = feature_vector_size
+        self.feature_shaper = nn.Linear(encoder_size, attention_size)
+        self.hidden_state_shaper = nn.Linear(hidden_size, attention_size)
+        self.attention_model = nn.Linear(
+            attention_size, 1
+        )  # attention for each annotation vector in aᵢ for i = 1 ... L
+        self.feature_vector_size = encoder_size
 
     def forward(self, feature_vectors, hidden_state):
 
         # Shape vectors so I can add them together
         fv_shaped = self.feature_shaper(feature_vectors)
-        hidden_state_shaped = self.hidden_state_shaper(hidden_state)
+        hidden_state_shaped = self.hidden_state_shaper(hidden_state).unsqueeze(1)
 
         # Compute e in the paper
-        e = self.attention_model(feature_vectors + hidden_state)
+        e = self.attention_model(F.relu(fv_shaped + hidden_state_shaped)).squeeze(2)
 
         # alpha = softmax(e)
-        alpha = nn.Softmax(e)
+        alpha = F.softmax(e, dim=1)
 
         # z = sum alpha_i a_i
-        z = torch.zeros(feature_vector_size)
-        for i in range(0,feature_vector_size-1):
-            z = z + alpha[i]*feature_vectors[:][i]
+        zhat = (feature_vectors * alpha.unsqueeze(2)).sum(dim=1)
 
         # Return values
-        return (z, alpha)
+        return (zhat, alpha)
+
+
+class Attention(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        raise NotImplementedError
+
 
 class MultiHeadedAttention(nn.Module):
     def __init__(self) -> None:

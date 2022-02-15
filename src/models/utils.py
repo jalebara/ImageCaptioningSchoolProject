@@ -1,6 +1,5 @@
 """Provides utilities for model training"""
 import torch
-from torch.utils.tensorboard import SummaryWriter
 import torch.nn as nn
 import typing
 from tqdm import tqdm
