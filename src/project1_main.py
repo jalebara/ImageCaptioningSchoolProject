@@ -23,6 +23,9 @@ from torch.utils.tensorboard import SummaryWriter
 
 from utils import EarlyStopping
 
+import metrics_for_imagecaption
+import gradcam
+
 RESULTS_DIRECTORY = os.path.abspath("results/project1")
 DATA_DIRECTORY = os.path.abspath("flickr30k/flickr30k.exdir")
 
@@ -118,9 +121,71 @@ def train_model(
         # report best image and caption to TensorBoard
 
 
-def evaluate_model():
-    raise NotImplementedError
+def evaluate_model(model: nn.Module, evaluate_data):
+    global HIDDEN
+    global ENCODER
+    global DEVICE
+    global EMBED
+    # 1. Create encoder, decoder, and stuff that is passed into validate_sat_epoch
+    encoder = 0
+    decoder = 0
+    for name,param in model.named_parameters:
+        if name in ['encoder']:
+            encoder = SATEncoder(params=param)
+            break
+        if name in ['decoder']:
+            decoder = SATDecoder(
+                params=param,
+                embedding_size=EMBED,
+                vocabulary_size=len(train_data.word_map),
+                max_caption_size=train_data.max_cap_len,
+                hidden_size=HIDDEN,
+                attention=attention,
+                encoder_size=ENCODER,
+                device=DEVICE,
+            )
+            break
+    # Ensure the model has params for encoder, and decoder
+    if not (encoder is SATEncoder and decoder is SATDecoder):
+            raise ValueError("Malformed model argument to evaluate_model()")
 
+
+    encoder.to(DEVICE)
+    decoder.to(DEVICE)
+    
+    evaluate_data_loader = DataLoader(evaluate_data, num_workers=4, batch_size=len(evaluate_data))
+
+    # 2. Forward propagate through network, capture output, and pass to Calculate_metrics function
+
+    # This part is mostly adapted from train.train_sat_epoch()
+    for i, (images, captions, caption_lengths, _) in enumerate(
+        pbar := tqdm(dataloader, f"Evaluation Progress ")
+    ):
+        images = images.to(device)
+        captions = captions.to(device)
+        caption_lengths=caption_lengths.to(device)
+
+        # Forward propagate
+        images_encoded = encoder(images)
+        predictions, alphas = decoder(images_encoded, captions, caption_lengths, True)
+
+        # remove <start> token for backpropagation
+        y = captions[:, 1:]
+
+        # remove unnecessary padding
+        yhat = pack_padded_sequence(predictions, caption_lengths.cpu().squeeze(), batch_first=True, enforce_sorted=False)[0]
+        y = pack_padded_sequence(y, caption_lengths.cpu().squeeze(), batch_first=True, enforce_sorted=False)[0]
+
+        Calculate_metrics(y, yhat)
+
+        # GradCAM
+        
+        gcm = gradcam.GradCamModel(model, model.last_layer)
+        images_gcm = gcm(images)
+        # TODO: I don't really understand the gradcam class so someone else should fill in the rest
+        
+        
+        
 
 def main():
     """Main experiment

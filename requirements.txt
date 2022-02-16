@@ -10,3 +10,5 @@ nltk
 torchmetrics
 tensorboard
 exdir
+rouge
+scikit-image
