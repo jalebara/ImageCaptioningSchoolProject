@@ -24,6 +24,7 @@ from torch.utils.tensorboard import SummaryWriter
 from utils import EarlyStopping
 
 import metrics_for_imagecaption
+import gradcam
 
 RESULTS_DIRECTORY = os.path.abspath("results/project1")
 DATA_DIRECTORY = os.path.abspath("flickr30k/flickr30k.exdir")
@@ -165,8 +166,8 @@ def evaluate_model(model: nn.Module, evaluate_data):
         caption_lengths=caption_lengths.to(device)
 
         # Forward propagate
-        images = encoder(images)
-        predictions, alphas = decoder(images, captions, caption_lengths, True)
+        images_encoded = encoder(images)
+        predictions, alphas = decoder(images_encoded, captions, caption_lengths, True)
 
         # remove <start> token for backpropagation
         y = captions[:, 1:]
@@ -176,6 +177,15 @@ def evaluate_model(model: nn.Module, evaluate_data):
         y = pack_padded_sequence(y, caption_lengths.cpu().squeeze(), batch_first=True, enforce_sorted=False)[0]
 
         Calculate_metrics(y, yhat)
+
+        # GradCAM
+        
+        gcm = gradcam.GradCamModel(model, model.last_layer)
+        images_gcm = gcm(images)
+        # TODO: I don't really understand the gradcam class so someone else should fill in the rest
+        
+        
+        
 
 def main():
     """Main experiment
