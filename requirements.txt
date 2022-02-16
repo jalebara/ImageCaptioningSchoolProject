@@ -8,3 +8,5 @@ opencv-python
 ipykernel
 nltk
 torchmetrics
+tensorboard
+exdir
