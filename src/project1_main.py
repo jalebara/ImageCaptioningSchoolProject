@@ -128,7 +128,6 @@ def evaluate_model(model: nn.Module, evaluate_data):
     # 1. Create encoder, decoder, and stuff that is passed into validate_sat_epoch
     encoder = 0
     decoder = 0
-    optimizer = 0
     for name,param in model.named_parameters:
         if name in ['encoder']:
             encoder = SATEncoder(params=param)
@@ -145,11 +144,8 @@ def evaluate_model(model: nn.Module, evaluate_data):
                 device=DEVICE,
             )
             break
-        if name in ['optimizer']:
-            optimizer = optim.Adam(params=param, lr=LEARNING_RATE) 
-            break
-
-    if not (encoder is SATEncoder and decoder is SATDecoder and optimizer is optim.Adam):
+    # Ensure the model has params for encoder, and decoder
+    if not (encoder is SATEncoder and decoder is SATDecoder):
             raise ValueError("Malformed model argument to evaluate_model()")
 
 
