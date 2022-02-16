@@ -10,3 +10,4 @@ nltk
 torchmetrics
 tensorboard
 exdir
+rouge

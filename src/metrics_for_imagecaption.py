@@ -26,7 +26,7 @@ def Calculate_metrics(reference, model_out):
   Recall-Oriented Understudy for Gisting Evaluation (ROUGE)
   ROUGE-N measures the number of matching ‘n-grams’ between our model-generated text and a ‘reference’.
   """
-  pip install rouge
+  #  pip install rouge
   from rouge import Rouge
   rouge = Rouge()
   print('ROUGE Score: %f' % rouge.get_scores(model_out, reference))
