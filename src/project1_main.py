@@ -21,7 +21,10 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from utils import EarlyStopping
+from utils import EarlyStopping,AverageMeter
+
+import metrics_for_imagecaption
+import gradcam
 
 RESULTS_DIRECTORY = os.path.abspath("results/project1")
 DATA_DIRECTORY = os.path.abspath("flickr30k/flickr30k.exdir")
@@ -125,9 +128,91 @@ def train_model(
         # report best image and caption to TensorBoard
 
 
-def evaluate_model():
-    raise NotImplementedError
+def evaluate_model(model: nn.Module, test_data_loader: DataLoader):
+    global HIDDEN
+    global ENCODER
+    global DEVICE
+    global EMBED
+    # 1. Create encoder, decoder, and stuff that is passed into validate_sat_epoch
+    encoder = 0
+    decoder = 0
+    for name,param in model.named_parameters:
+        if name in ['encoder']:
+            encoder = SATEncoder(params=param)
+            break
+        if name in ['decoder']:
+            decoder = SATDecoder(
+                params=param,
+                embedding_size=EMBED,
+                vocabulary_size=len(train_data.word_map),
+                max_caption_size=train_data.max_cap_len,
+                hidden_size=HIDDEN,
+                attention=attention,
+                encoder_size=ENCODER,
+                device=DEVICE,
+            )
+            break
+    # Ensure the model has params for encoder, and decoder
+    if not (encoder is SATEncoder and decoder is SATDecoder):
+            raise ValueError("Malformed model argument to evaluate_model()")
 
+
+    encoder.to(DEVICE)
+    decoder.to(DEVICE)
+
+    bleu_1_avg = AverageMeter("bleu_1")
+    bleu_2_avg = AverageMeter("bleu_2")
+    bleu_3_avg = AverageMeter("bleu_3")
+    bleu_4_avg = AverageMeter("bleu_4")
+    rouge_avg = AverageMeter("rouge")
+    meteor_avg = AverageMeter("meteor")
+    
+    # 2. Forward propagate through network, capture output, and pass to Calculate_metrics function
+
+    # This part is mostly adapted from train.train_sat_epoch()
+    for i, (images, captions, caption_lengths, _) in enumerate(
+        pbar := tqdm(test_data_loader, f"Evaluation Progress ")
+    ):
+        images = images.to(device)
+        captions = captions.to(device)
+        caption_lengths=caption_lengths.to(device)
+
+        # Forward propagate
+        images_encoded = encoder(images)
+        predictions, alphas = decoder(images_encoded, captions, caption_lengths, True)
+
+        # remove <start> token for backpropagation
+        y = captions[:, 1:]
+
+        # remove unnecessary padding
+        yhat = pack_padded_sequence(predictions, caption_lengths.cpu().squeeze(), batch_first=True, enforce_sorted=False)[0]
+        y = pack_padded_sequence(y, caption_lengths.cpu().squeeze(), batch_first=True, enforce_sorted=False)[0]
+
+        # Average all the scores
+        metrics = Calculate_metrics(y, yhat)
+        bleu_1_avg.update(metrics['bleu_1'])
+        bleu_2_avg.update(metrics['bleu_2'])
+        bleu_3_avg.update(metrics['bleu_3'])
+        bleu_4_avg.update(metrics['bleu_4'])
+        rouge_avg.update(metrics['rouge'])
+        meteor_avg.update(metrics['meteor'])
+        
+        # GradCAM
+        
+        gcm = gradcam.GradCamModel(model, model.last_layer)
+        images_gcm = gcm(images)
+        # TODO: I don't really understand the gradcam class so someone else should fill in the rest
+
+
+        # END TODO
+    
+    to_return['bleu_1'] = bleu_1_avg.get_average()
+    to_return['bleu_2'] = bleu_2_avg.get_average()
+    to_return['bleu_3'] = bleu_3_avg.get_average()
+    to_return['bleu_4'] = bleu_4_avg.get_average()
+    to_return['rouge']= rouge_avg.get_average()
+    to_return['meteor']= meteor_avg.get_average()
+    return to_return
 
 def main():
     """Main experiment
@@ -202,7 +287,7 @@ def main():
         model = load_model_dict(model, best_checkpoint_path)
 
         # test set evaluation
-        evaluate_model()
+        evaluate_model(model, testloader)
         # generate class attention maps
 
 
