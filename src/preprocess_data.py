@@ -13,8 +13,10 @@ import numpy as np
 import os
 from tqdm import tqdm
 from torchvision.datasets import Flickr30k
-
-TOPK = 2000
+nltk.download('omw-1.4')
+nltk.download("wordnet")
+from nltk.stem import WordNetLemmatizer
+TOPK = 1000
 
 
 def parse_args() -> argparse.Namespace:
@@ -53,6 +55,7 @@ def main():
 
     # build word count map and load images
     words = defaultdict(lambda: 0)
+    lemmatizer = WordNetLemmatizer()
     max_caption_length = 0
     for i, img_id in enumerate(tqdm(img_ids, desc="Loading Data")):
         image, captions = dataset[i]
@@ -66,10 +69,11 @@ def main():
         else:
             store = test_archive
             cap_store = test_captions
-        store.require_dataset(img_id, data=image)
+        #store.require_dataset(img_id, data=image)
         for cap in captions:
             cap_store[img_id].append(cap)
             tokens = nltk.tokenize.word_tokenize(cap.lower())
+            tokens = [lemmatizer.lemmatize(toke) for toke in tokens]
             if len(tokens) > max_caption_length:
                 max_caption_length = len(tokens)
             for toke in tokens:
@@ -82,10 +86,10 @@ def main():
     topk = word_freqs[:TOPK]  # We select top K words to be the model's vocabulary
     topk = [w for w, _ in topk]  # only care about the words
     token_map = {token: i + 4 for i, token in enumerate(topk)}
-    token_map["<start>"] = 1
-    token_map["<end>"] = 2
-    token_map["<unc>"] = 3
-    token_map["<pad>"] = 0
+    token_map["<start>"] = 0
+    token_map["<end>"] = 1
+    token_map["<unc>"] = 2
+    token_map["<pad>"] = 3
 
     # store tokens for dataset
     for img_id in tqdm(img_ids, desc="Processing Captions"):
@@ -102,6 +106,7 @@ def main():
         lengths = []
         for cap in cap_store[img_id]:
             tokens = nltk.tokenize.word_tokenize(cap.lower())
+            tokens = [lemmatizer.lemmatize(toke) for toke in tokens]
             lengths.append(len(tokens))
             # replace uncommon words
             res = copy.copy(tokens)

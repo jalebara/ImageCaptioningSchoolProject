@@ -41,9 +41,9 @@ class EarlyStopping(object):
     def __init__(
         self,
         checkpoint_path: str,
-        delta: float = 0.01,
+        delta: float = 0.005,
         mode: str = "max",
-        patience: int = 4,
+        patience: int = 8,
         report_func: typing.Callable = print,
     ) -> None:
         self.patience = patience
@@ -57,17 +57,17 @@ class EarlyStopping(object):
 
     def __call__(self, metric: float, state: dict):
 
-        if self.mode == "min":
-            metric = -metric
+        metric  = abs(metric)
 
-        if self.best_metric + self.delta > metric:
+        if (self.mode == "min" and self.best_metric - self.delta <= metric) or (self.mode == "max" and self.best_metric + self.delta >= metric):
             self.counter += 1
             self.report(f"Model did not improve {self.counter}/{self.patience}")
             if self.counter >= self.patience:
                 self.stop = True
-        elif self.best_metric + self.delta < metric:
+        else:
+            self.best_metric = metric
             torch.save(state, self.checkpoint)
-            counter = 0
+            self.counter = 0
 
 
 def calc_time(t: float) -> str:

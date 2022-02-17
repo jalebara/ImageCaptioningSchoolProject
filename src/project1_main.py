@@ -26,15 +26,16 @@ from utils import EarlyStopping
 RESULTS_DIRECTORY = os.path.abspath("results/project1")
 DATA_DIRECTORY = os.path.abspath("flickr30k/flickr30k.exdir")
 
-LEARNING_RATE = 1e-3
-EPOCHS = 20
-EMBED = 1024
-HIDDEN = 1024
-ATTENTION = 1024
-DECODER = 1024
-ENCODER = 1280
+SCHEDULED_SAMPLING_CONVERGENCE = 1/5
+LEARNING_RATE = 5e-3
+EPOCHS = 60
+EMBED = 512
+HIDDEN = 512
+ATTENTION = 512
+DROP = 0.5
+ENCODER = 2048
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
+BATCH_SIZE = 64
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser("Project 1 Main Experiment")
@@ -53,6 +54,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--unfreeze_last", action="store", type=int, default=0, required=False)
     parser.add_argument("--data_directory", action="store", type=str, required=True)
     parser.add_argument("--smoke_test", action="store_true", default=False, required=False)
+    parser.add_argument("--fast_test", action="store_true", default=False, required=False)
     return parser.parse_args()
 
 
@@ -72,7 +74,7 @@ def train_model(
     early_stopping_checkpoint = join(results_path, "early_stopping.pt")
     writer = SummaryWriter(os.path.abspath("results/project1/runs"))
     # Early Stopping
-    early_stop = EarlyStopping(checkpoint_path=early_stopping_checkpoint, report_func=logger.info)
+    early_stop = EarlyStopping(checkpoint_path=early_stopping_checkpoint, report_func=logger.info, delta=0.001)
 
     # Model Paramerers
     criterion = nn.CrossEntropyLoss()
@@ -88,8 +90,10 @@ def train_model(
     for epoch in range(EPOCHS):
         if early_stop.stop:
             break  # stop training when the model fails to learn for too long
-        train_metrics = train_sat_epoch(epoch, encoder, decoder, trainloader, optimizer, criterion, DEVICE)
-        val_metrics = validate_sat_epoch(
+        if epoch > 30 and epoch % 2 == 1:
+            decoder.update_scheduled_sampling_rate(SCHEDULED_SAMPLING_CONVERGENCE)
+        train_metrics = train_sat_epoch(epoch, encoder, decoder, trainloader, optimizer, criterion, word_map, DEVICE)
+        val_metrics, best_img, best_caption, actual_caption = validate_sat_epoch(
             epoch, encoder, decoder, valloader, criterion, word_map, DEVICE
         )
 
@@ -109,12 +113,15 @@ def train_model(
         writer.add_scalars("Train-Val Loss/ Epoch", {
             "Train Loss": train_metrics["loss"],
             "Val Loss": val_metrics["loss"]
-        })
-        writer.add_scalar("BlEU4", val_metrics["bleu4"])
+        }, global_step=epoch)
+        writer.add_scalar("BLEU4", val_metrics["bleu4"], global_step=epoch)
         writer.add_scalars("Top 5 Acc", {
             "train top 5 acc": train_metrics["top 5 acc"],
             "val top 5 acc": val_metrics["top 5 acc"]
-        })
+        }, global_step=epoch)
+        writer.add_image(f"Epoch {epoch}", best_img/255 )
+        writer.add_text(f"Epoch {epoch}", f"Predicted caption: {best_caption}", 0)
+        writer.add_text(f"Epoch {epoch}", f"Actual caption: {actual_caption}", 1)
         # report best image and caption to TensorBoard
 
 
@@ -137,7 +144,8 @@ def main():
     global EPOCHS
     # parse arguments
     args = parse_args()
-    logger = logging.getLogger()
+    logger = logging.getLogger("sat_model")
+    logger.setLevel(logging.INFO)
 
     # create results directory
     if not os.path.exists(RESULTS_DIRECTORY):
@@ -151,31 +159,30 @@ def main():
         # train the model
         if args.augment_data:
             # load augmented dataset
-            train_data = AugmentedFlickrDataset(DATA_DIRECTORY, mode="train", smoke_test=args.smoke_test)
+            train_data = AugmentedFlickrDataset(DATA_DIRECTORY, mode="train", smoke_test=args.smoke_test, fast_test=args.fast_test)
         else:
-            train_data = Flickr30k(DATA_DIRECTORY, mode="train", smoke_test=args.smoke_test)
+            train_data = Flickr30k(DATA_DIRECTORY, mode="train", smoke_test=args.smoke_test, fast_test=args.fast_test)
         # no augmentation on validation set
-        valid_data = Flickr30k(DATA_DIRECTORY, mode="valid", smoke_test=args.smoke_test)
+        valid_data = Flickr30k(DATA_DIRECTORY, mode="valid", smoke_test=args.smoke_test, fast_test=args.fast_test)
 
     # Construct the model
     encoder = SATEncoder()
-    attention = SATAttention(ENCODER, HIDDEN, ATTENTION)
     decoder = SATDecoder(
         embedding_size=EMBED,
         vocabulary_size=len(train_data.word_map),
         max_caption_size=train_data.max_cap_len,
         hidden_size=HIDDEN,
-        attention=attention,
+        attention_size=ATTENTION,
         encoder_size=ENCODER,
         device=DEVICE,
+        dropout_rate=DROP
     )
 
     encoder.to(DEVICE)
-    attention.to(DEVICE)
     decoder.to(DEVICE)
 
     if args.smoke_test:
-        EPOCHS = 3
+        EPOCHS = 10
         # check to make sure that the model actually works
         tensor = torch.Tensor(np.random.uniform(0, 255, (1, 3, 224, 224))).to(DEVICE)
 
@@ -184,14 +191,14 @@ def main():
 
     if not args.skip_training:
         # train the model
-        trainloader = DataLoader(train_data, num_workers=4, batch_size=32)
-        valloader = DataLoader(valid_data, num_workers=4, batch_size=32)
+        trainloader = DataLoader(train_data, num_workers=8, batch_size=BATCH_SIZE)
+        valloader = DataLoader(valid_data, num_workers=8, batch_size=BATCH_SIZE)
         train_model(encoder, decoder, trainloader, valloader, RESULTS_DIRECTORY, train_data.word_map, "checkpoint.pt", logger)
 
     if not args.skip_evaluation:
         # no augmentation on test set
-        test_data = Flickr30k(DATA_DIRECTORY, mode="test", smoke_test=args.smoke_test, batch_size=32)
-        testloader = DataLoader(test_data)
+        test_data = Flickr30k(DATA_DIRECTORY, mode="test",num_workers=8, smoke_test=args.smoke_test)
+        testloader = DataLoader(test_data, batch_size=BATCH_SIZE)
         model = load_model_dict(model, best_checkpoint_path)
 
         # test set evaluation
