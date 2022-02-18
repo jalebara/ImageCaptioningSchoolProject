@@ -30,13 +30,13 @@ RESULTS_DIRECTORY = os.path.abspath("results/project1")
 DATA_DIRECTORY = os.path.abspath("flickr30k/flickr30k.exdir")
 
 SCHEDULED_SAMPLING_CONVERGENCE = 1/5
-LEARNING_RATE = 5e-3
+LEARNING_RATE = 1e-4
 EPOCHS = 60
 EMBED = 512
-HIDDEN = 512
+HIDDEN = 256
 ATTENTION = 512
-DROP = 0.5
-ENCODER = 2048
+DROP = 0.75
+ENCODER = 1408
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 BATCH_SIZE = 64
 
@@ -77,7 +77,7 @@ def train_model(
     early_stopping_checkpoint = join(results_path, "early_stopping.pt")
     writer = SummaryWriter(os.path.abspath("results/project1/runs"))
     # Early Stopping
-    early_stop = EarlyStopping(checkpoint_path=early_stopping_checkpoint, report_func=logger.info, delta=0.001)
+    early_stop = EarlyStopping(checkpoint_path=early_stopping_checkpoint, report_func=logger.info, delta=0.001, patience=20)
 
     # Model Paramerers
     criterion = nn.CrossEntropyLoss()
@@ -93,7 +93,7 @@ def train_model(
     for epoch in range(EPOCHS):
         if early_stop.stop:
             break  # stop training when the model fails to learn for too long
-        if epoch > 30 and epoch % 2 == 1:
+        if epoch > 15 and epoch % 2 == 1:
             decoder.update_scheduled_sampling_rate(SCHEDULED_SAMPLING_CONVERGENCE)
         train_metrics = train_sat_epoch(epoch, encoder, decoder, trainloader, optimizer, criterion, word_map, DEVICE)
         val_metrics, best_img, best_caption, actual_caption = validate_sat_epoch(

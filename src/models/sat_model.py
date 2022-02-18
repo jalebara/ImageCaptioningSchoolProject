@@ -39,7 +39,7 @@ class SATEncoder(nn.Module):
         unfreeze_last: int = 0,
     ) -> typing.NoReturn:
         super(SATEncoder, self).__init__()
-        features = models.resnet152(pretrained=pretrained)
+        features = models.efficientnet_b2(pretrained=pretrained)
 
         # remove classifier at the top of the model
         features = nn.Sequential(*(list(features.children())[:-2]))
