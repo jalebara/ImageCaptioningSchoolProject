@@ -125,6 +125,12 @@ class SATDecoder(nn.Module):
         self.dropout = nn.Dropout(dropout_rate)
         # Teacher Forcing Rate
         self._teacher_forcing_rate = 1
+        self.initialize_weights()
+
+    def initialize_weights(self):
+        self.embedding.weight.data.uniform_(-0.1,0.1)
+        self.deep_output.weight.data.uniform_(-0.1,0.1)
+        self.deep_output.bias.data.fill_(0)
 
     def update_scheduled_sampling_rate(self, convergence_rate: float) -> typing.NoReturn:
         """Updates the scheduled sampling rate linearly"""
