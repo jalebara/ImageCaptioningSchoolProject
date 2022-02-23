@@ -23,6 +23,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from utils import EarlyStopping,AverageMeter
 
+from tqdm import tqdm
 import metrics_for_imagecaption
 import gradcam
 
@@ -33,7 +34,7 @@ SCHEDULED_SAMPLING_CONVERGENCE = 1/5
 LEARNING_RATE = 1e-4
 EPOCHS = 60
 EMBED = 512
-HIDDEN = 256
+HIDDEN = 512
 ATTENTION = 512
 DROP = 0.75
 ENCODER = 1408
@@ -170,16 +171,14 @@ def evaluate_model(model: nn.Module, test_data_loader: DataLoader):
     # 2. Forward propagate through network, capture output, and pass to Calculate_metrics function
 
     # This part is mostly adapted from train.train_sat_epoch()
-    for i, (images, captions, caption_lengths, _) in enumerate(
-        pbar := tqdm(test_data_loader, f"Evaluation Progress ")
-    ):
+    for i, (images, captions, caption_lengths, _) in enumerate(tqdm(test_data_loader, f"Evaluation Progress ")):
         images = images.to(device)
         captions = captions.to(device)
         caption_lengths=caption_lengths.to(device)
 
         # Forward propagate
         images_encoded = encoder(images)
-        predictions, alphas = decoder(images_encoded, captions, caption_lengths, True)
+        predictions, alphas = decoder(images_encoded, captions, caption_lengths, False)
 
         # remove <start> token for backpropagation
         y = captions[:, 1:]

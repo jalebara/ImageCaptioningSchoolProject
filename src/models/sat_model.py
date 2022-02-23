@@ -39,7 +39,7 @@ class SATEncoder(nn.Module):
         unfreeze_last: int = 0,
     ) -> typing.NoReturn:
         super(SATEncoder, self).__init__()
-        features = models.efficientnet_b2(pretrained=pretrained)
+        features = models.resnet152(pretrained=pretrained)
 
         # remove classifier at the top of the model
         features = nn.Sequential(*(list(features.children())[:-2]))
@@ -53,7 +53,7 @@ class SATEncoder(nn.Module):
             for param in features.features[unfreeze_last].parameters():
                 param.requires_grad = True
         self.features = features
-        self.sizing = nn.AdaptiveAvgPool2d((encoded_size, encoded_size))
+        #self.sizing = nn.AdaptiveAvgPool2d((encoded_size, encoded_size))
 
     def forward(self, x: torch.Tensor):
         """Implements the forward pass of the encoder
@@ -71,7 +71,7 @@ class SATEncoder(nn.Module):
             torch.Tensor : encoded image tensor of shape (batch_size, 1280, imag_size//32, image_size//32)
         """
         x = self.features(x)  # (batch_size, 1280, image_size//32, image_size//32 )
-        x = self.sizing(x) # (batch_size, 1280, encoded_size, encoded_size)
+        #x = self.sizing(x) # (batch_size, 1280, encoded_size, encoded_size)
         return x.permute(0, 2, 3, 1)  # pass encoded values and additional arguments to next layer
 
 
@@ -264,7 +264,6 @@ class SATDecoder(nn.Module):
                 predictions[:, i, :] = scores  # append predictions for the i-th token
                 αs[:, i, :] = α  # store attention weights for doubly stochastic regularization
         return predictions, αs
-
 
 class BayesianSATDecoder(nn.Module):
     def __init__(self) -> None:

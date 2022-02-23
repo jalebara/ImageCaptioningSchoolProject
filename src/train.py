@@ -53,7 +53,7 @@ def train_sat_epoch(
 
         # Feed Forward
         images = encoder(images)
-        predictions, alphas = decoder(images, captions, caption_lengths, True)
+        predictions, alphas = decoder(images, captions, caption_lengths, False)
 
         # remove <start> token for backpropagation
         y = captions[:, 1:]
