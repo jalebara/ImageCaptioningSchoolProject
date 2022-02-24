@@ -7,7 +7,8 @@ from torchvision import models
 from skimage.io import imread
 from skimage.transform import resize
 import cv2
-  
+
+
 class GradCamModel(nn.Module):
     def __init__(self, model, last_layer):
         super().__init__()
@@ -17,7 +18,7 @@ class GradCamModel(nn.Module):
         self.selected_out = None
         self.model = model
         self.last_layer = last_layer
-        
+
         """ 
         The gradients of the output with respect to the activations are merely intermediate values
         They are discarded as soon as the gradient propagates through them on the way back
@@ -29,12 +30,12 @@ class GradCamModel(nn.Module):
         layerhook will store all the foward pass hooks
         """
         self.layerhook.append(self.model.last_layer.register_forward_hook(self.forward_hook()))
-        
+
         for p in self.model.parameters():
             p.requires_grad = True
-    
-    def activations_hook(self,grad):
-      # grad: The value contained in the grad attribute of the tensor after backward is called
+
+    def activations_hook(self, grad):
+        # grad: The value contained in the grad attribute of the tensor after backward is called
         self.gradients = grad
 
     def get_activation_gradients(self):
@@ -45,54 +46,56 @@ class GradCamModel(nn.Module):
         def hook(module, inp, out):
             self.selected_out = out
             self.tensorhook.append(out.register_hook(self.activations_hook))
+
         return hook
 
-    def forward(self,x):
-      #forward pass of the model to get predictions
-      out = self.model(x)
-      # returning the output of the model and activation gradients
-      return out, self.selected_out
-    
+    def forward(self, x):
+        # forward pass of the model to get predictions
+        out = self.model(x)
+        # returning the output of the model and activation gradients
+        return out, self.selected_out
+
+
 def compute_heatmap(input_image):
 
-  gcmodel = GradCamModel().to("cuda:0")
+    gcmodel = GradCamModel().to("cuda:0")
 
-  """
+    """
   Give INPUT IMAGES to gradCAM model
   model_output  : Predicted class in the image
   activations   : Selected Region in the image
   """
-  model_output, activations = gcmodel(input_image)
+    model_output, activations = gcmodel(input_image)
 
-  """
+    """
   detach() : Returns a new Tensor, detached from the current graph
   """
-  activations = activations.detach().cpu()
+    activations = activations.detach().cpu()
 
-  # array[600] need to change!
-  loss = nn.CrossEntropyLoss()(model_output,torch.from_numpy(np.array([600])).to("cuda:0"))
+    # array[600] need to change!
+    loss = nn.CrossEntropyLoss()(model_output, torch.from_numpy(np.array([600])).to("cuda:0"))
 
-  # Backpropogation
-  loss.backward()
-  
-  # Calculating gradients
-  grads = gcmodel.get_activation_gradients().detach().cpu()
+    # Backpropogation
+    loss.backward()
 
-  # Calculating activations using pooled gradients
-  pooled_grads = torch.mean(grads, dim=[0,2,3]).detach().cpu()
-  for i in range(activations.shape[1]):
-    activations[:,i,:,:] += pooled_grads[i]
+    # Calculating gradients
+    grads = gcmodel.get_activation_gradients().detach().cpu()
 
-  # Create Heatmap
-  heatmap = torch.mean(activations, dim = 1).squeeze()
-  heatmap_max = heatmap.max(axis = 0)[0]
-  heatmap /= heatmap_max
+    # Calculating activations using pooled gradients
+    pooled_grads = torch.mean(grads, dim=[0, 2, 3]).detach().cpu()
+    for i in range(activations.shape[1]):
+        activations[:, i, :, :] += pooled_grads[i]
 
-  # Display Heatmap
-  heatmap = cv2.resize(heatmap, (input_image.shape[1], input_image.shape[0]))
-  heatmap = np.uint8(255 * heatmap)
-  heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
-  intensity = 0.5
-  superimposed_img = heatmap * intensity + input_image
+    # Create Heatmap
+    heatmap = torch.mean(activations, dim=1).squeeze()
+    heatmap_max = heatmap.max(axis=0)[0]
+    heatmap /= heatmap_max
 
-  plt.imshow(superimposed_img)
+    # Display Heatmap
+    heatmap = cv2.resize(heatmap, (input_image.shape[1], input_image.shape[0]))
+    heatmap = np.uint8(255 * heatmap)
+    heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
+    intensity = 0.5
+    superimposed_img = heatmap * intensity + input_image
+
+    plt.imshow(superimposed_img)
