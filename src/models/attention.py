@@ -43,6 +43,8 @@ class SATAttention(nn.Module):
 
 
 class Attention(nn.Module):
+    """Implements Scaled Dot Product Attention"""
+
     def __init__(self) -> None:
         super().__init__()
         raise NotImplementedError

@@ -4,13 +4,13 @@ from models.sat_model import SATEncoder, SATDecoder
 from tqdm import tqdm
 
 import numpy as np
-import torch 
+import torch
 import skimage
 import torchvision
 from torchmetrics import BLEUScore
 import matplotlib.pyplot as plt
 
-SCHEDULED_SAMPLING_CONVERGENCE = 1/5
+SCHEDULED_SAMPLING_CONVERGENCE = 1 / 5
 SCHEDULED_SAMPLING = False
 LEARNING_RATE = 1e-4
 EPOCHS = 60
@@ -21,17 +21,24 @@ DROP = 0.75
 ENCODER = 2048
 DEVICE = "cpu"
 BATCH_SIZE = 64
-SMOKE_TEST=False
+SMOKE_TEST = False
 
-best_checkpoint_path = "/home/jeff-laptop/Code/school/ece763/class_project/ECE763-Class-Project-Image-Captioning/src/best_checkpoint1.pt"
+best_checkpoint_path = (
+    "/home/jeff-laptop/Code/school/ece763/class_project/ECE763-Class-Project-Image-Captioning/src/best_checkpoint1.pt"
+)
+
 
 def main():
     # load data
-    test_data = Flickr30k(root="/home/jeff-laptop/Code/school/ece763/class_project/ECE763-Class-Project-Image-Captioning/flickr30k/flickr30k.exdir",mode="test", smoke_test=SMOKE_TEST)
+    test_data = Flickr30k(
+        root="/home/jeff-laptop/Code/school/ece763/class_project/ECE763-Class-Project-Image-Captioning/flickr30k/flickr30k.exdir",
+        mode="test",
+        smoke_test=SMOKE_TEST,
+    )
     word_map = test_data.word_map
     vocab_size = len(test_data.word_map.keys())
 
-    inv_word_map = {v:k for k,v in word_map.items()}
+    inv_word_map = {v: k for k, v in word_map.items()}
     # load the model
     state_dicts = torch.load(best_checkpoint_path, map_location="cpu")
     encoder = SATEncoder()
@@ -43,36 +50,36 @@ def main():
         attention_size=ATTENTION,
         encoder_size=ENCODER,
         device=DEVICE,
-        dropout_rate=DROP
+        dropout_rate=DROP,
     )
-    encoder.load_state_dict(state_dicts["encoder"]) # enforce the correct backbone
+    encoder.load_state_dict(state_dicts["encoder"])  # enforce the correct backbone
     decoder.load_state_dict(state_dicts["decoder"])
     encoder.eval()
     decoder.eval()
     blue_score = BLEUScore()
     best_results = []
-    for _, i in enumerate(pbar :=  tqdm(range(len(test_data)))):
+    for _, i in enumerate(pbar := tqdm(range(len(test_data)))):
         if i % 5 != 0:
             continue
         mod, target, lengths, all_captions, img = test_data[i]
         all_captions = all_captions[None, :, :]
-        mod = mod[None,:,:,:]
-        target = target[None,:]
-        lengths = lengths[None,:]
+        mod = mod[None, :, :, :]
+        target = target[None, :]
+        lengths = lengths[None, :]
         ann = encoder(mod)
         predictions, alphas = decoder(ann, target, lengths, SCHEDULED_SAMPLING)
 
         # get  reference captions without additional characters
         references = []
-        for  j in range(all_captions.shape[0]):#iterate over batches
+        for j in range(all_captions.shape[0]):  # iterate over batches
             ref_caps = all_captions[j].tolist()
             temp_ref = []
-            for ref in ref_caps: # iterate over available captions for image
+            for ref in ref_caps:  # iterate over available captions for image
                 # strip unnecessary tokens
                 tmp = [f"{inv_word_map[t]} " for t in ref if t not in [word_map["<pad>"], word_map["<start>"]]]
                 temp_ref.append("".join(tmp))
             references.append(temp_ref)
-        
+
         _, preds = torch.max(predictions, dim=2)
         preds = preds.tolist()
         predicted_captions = []
@@ -80,15 +87,14 @@ def main():
             p = preds[k]
             temp = [f"{inv_word_map[t]} " for t in p if t not in [word_map["<pad>"], word_map["<start>"]]]
             predicted_captions.append("".join(temp).split(".")[0])
-        
 
         score = blue_score(predicted_captions, references)
-        pbar.set_postfix({"bleu4":score.numpy()})
-        best_results.append( (score, predicted_captions, all_captions, img, alphas.detach().numpy(), mod) )
+        pbar.set_postfix({"bleu4": score.numpy()})
+        best_results.append((score, predicted_captions, all_captions, img, alphas.detach().numpy(), mod))
         best_results.sort(key=lambda x: x[0].numpy(), reverse=True)
         if len(best_results) > 5:
-            best_results = [best_results[i] for i in range(5)] # keep only top 5
-    
+            best_results = [best_results[i] for i in range(5)]  # keep only top 5
+
     ## Get attention maps
     for res in best_results:
         score, predicted, allcaps, img, alphas, x = res
@@ -119,7 +125,9 @@ def main():
 
         # our predictions will be the size of the largest encoding (batch_size, largest_encoding, vocab_size)
         # each entry of this tensor will have a score for each batch entry, position in encoding, and vocabulary word candidate
-        predictions = torch.zeros(batch_size, decoder._max_cap_size, vocab_size).to(decoder._device)  # predictions set to <pad>
+        predictions = torch.zeros(batch_size, decoder._max_cap_size, vocab_size).to(
+            decoder._device
+        )  # predictions set to <pad>
         prev_words = torch.zeros((batch_size,)).long().to(decoder._device)
         alphas = torch.zeros(
             batch_size, decoder._max_cap_size, x.size(1)
@@ -132,7 +140,6 @@ def main():
                 if i > max(lengths[0]):
                     break  # no more captions left at requested size
                 zhat, α = decoder.attention(x, h)
-
 
                 # gate
                 gate = decoder.sigmoid(decoder.f_beta(h))
@@ -161,20 +168,20 @@ def main():
                     torch.cat([embedded, zhat], dim=1),
                     (h, c),
                 )
-                scores = decoder.deep_output(decoder.dropout(h)) # assign a score to potential vocabulary candidtates
+                scores = decoder.deep_output(decoder.dropout(h))  # assign a score to potential vocabulary candidtates
                 prev_words = torch.argmax(scores, dim=1)
                 predictions[:, i, :] = scores  # append predictions for the i-th token
                 alphas[:, i, :] = α  # store attention weights for doubly stochastic regularization
             # generate attention visualization
             square_att = α.view(-1, enc_img_side, enc_img_side).detach().numpy()
             square_att = skimage.transform.pyramid_expand(square_att[0], upscale=32, sigma=8)
-            plt.imshow(img.permute(1,2,0).numpy()/255)
-            plt.imshow(square_att, alpha=0.8,cmap="gray", interpolation=None)
+            plt.imshow(img.permute(1, 2, 0).numpy() / 255)
+            plt.imshow(square_att, alpha=0.8, cmap="gray", interpolation=None)
             plt.title(inv_word_map[prev_words.cpu().item()])
             plt.tight_layout()
             plt.axis("off")
             plt.show()
-            if inv_word_map[prev_words.cpu().item()] == '.':
+            if inv_word_map[prev_words.cpu().item()] == ".":
                 break
 
 

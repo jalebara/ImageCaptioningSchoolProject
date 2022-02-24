@@ -5,23 +5,53 @@ import typing
 from tqdm import tqdm
 from time import time
 import numpy as np
+from torchmetrics import BLEUScore
+from torchmetrics.text.rouge import ROUGEScore
+from nltk.translate.meteor_score import meteor_score
+from nltk.tokenize import word_tokenize
+from functools  import wraps
 
 
-class ModelComposition(nn.Module):
-    """Wrapper class to compose model components"""
+class NLPMetricAggregator(object):
+    """ Class for aggregating caption hypotheses and generating NLP metrics
+    """
+    def __init__(self) -> None:
+        self._predicted_captions = []
+        self._reference_captions = []
+        self.bleu1 = BLEUScore(1)
+        self.bleu2 = BLEUScore(2)
+        self.bleu3 = BLEUScore(3)
+        self.bleu4 = BLEUScore(4)
+        self.rouge = ROUGEScore()
 
-    def __init__(self, models: list) -> typing.NoReturn:
-        super().__init__()
-        self.model = nn.Sequential(*models)
+    def update(self, predicted: list, reference: list):
+        """Store predictions and references
+        """
+        self._predicted_captions.extend(predicted)
+        self._reference_captions.extend(reference)
 
-    def forward(self, x):
-        return self.model(x)
+    def generate_metric_summaries(self):
+        """ Retrieves NLP metrics 
+        Returns:
+            (dict): A dictionary of NLP metrics generated from stored hypotheses and references
+        """
+        meteor_meter = AverageMeter("Meteor Mean")
+        for pred, refs in zip(self._predicted_captions, self._reference_captions):
+            meteor_meter.update(meteor_score([word_tokenize(r) for r in refs], word_tokenize(pred)))
+        return {
+            "bleu1": self.bleu1(self._predicted_captions, self._reference_captions),
+            "bleu2": self.bleu2(self._predicted_captions, self._reference_captions),
+            "bleu3": self.bleu3(self._predicted_captions, self._reference_captions),
+            "bleu4": self.bleu4(self._predicted_captions, self._reference_captions),
+            "rouge_fmeasure": self.rouge(self._predicted_captions, self._reference_captions)["rouge1_fmeasure"],
+            "meteor": np.round(meteor_meter.get_average(), 4),
+        }
 
 
 class AverageMeter(object):
     """Simple class to compute a running average of some tracked value and can be printed"""
 
-    def __init__(self, name: str="mean") -> None:
+    def __init__(self, name: str = "mean") -> None:
         self._name = name
         self._sum = 0
         self._count = 0
@@ -43,7 +73,7 @@ class EarlyStopping(object):
         checkpoint_path: str,
         delta: float = 0.005,
         mode: str = "max",
-        patience: int = 8,
+        patience: int = 5,
         report_func: typing.Callable = print,
     ) -> None:
         self.patience = patience
@@ -57,9 +87,11 @@ class EarlyStopping(object):
 
     def __call__(self, metric: float, state: dict):
 
-        metric  = abs(metric)
+        metric = abs(metric)
 
-        if (self.mode == "min" and self.best_metric - self.delta <= metric) or (self.mode == "max" and self.best_metric + self.delta >= metric):
+        if (self.mode == "min" and self.best_metric - self.delta <= metric) or (
+            self.mode == "max" and self.best_metric + self.delta >= metric
+        ):
             self.counter += 1
             self.report(f"Model did not improve {self.counter}/{self.patience}")
             if self.counter >= self.patience:
@@ -83,3 +115,4 @@ def topk_accuracy(yhat: torch.Tensor, y: torch.Tensor, k: int):
     correct = idx.eq(y.view(-1, 1).expand_as(idx))
     correct = correct.view(-1).float().sum()
     return correct.item() / batch_size * 100.0
+

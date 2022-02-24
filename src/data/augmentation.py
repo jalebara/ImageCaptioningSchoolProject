@@ -16,10 +16,12 @@ from typing import Any, Callable, Optional, Tuple
 from multiprocessing import Pool
 import PIL
 
+
 def load_metadata(path, key, mode):
     archive = exdir.File(path, mode="r")
     archive = archive.require_group(mode)
     return {key: archive[key].attrs["captions"]}, {key: archive[key].attrs["lengths"]}
+
 
 class Flickr30k(VisionDataset):
     """ """
@@ -30,14 +32,14 @@ class Flickr30k(VisionDataset):
         transform: Callable = transforms.Compose(
             [
                 transforms.ConvertImageDtype(float32),
-                transforms.Resize((256,256)),
+                transforms.Resize((256, 256)),
                 transforms.CenterCrop(224),
             ]
         ),
         target_transform: Optional[Callable] = None,
         mode: str = "test",
         smoke_test=False,
-        fast_test=False
+        fast_test=False,
     ) -> None:
         super(Flickr30k, self).__init__(root, transform=transform, target_transform=target_transform)
         archive = exdir.File(root, mode="r")
@@ -46,15 +48,15 @@ class Flickr30k(VisionDataset):
         if smoke_test:
             data_keys = data_keys[:10]
         elif fast_test:
-            data_keys = data_keys[:int(len(data_keys)*0.3)]
+            data_keys = data_keys[: int(len(data_keys) * 0.3)]
         # Read tokenized captions and store in dict
         self.annotations = defaultdict(list)
         self.lengths = defaultdict(list)
         self.normalize = transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 
         with Pool(processes=10) as pool:
-            zx =  list(zip([root for _ in range(len(data_keys))], data_keys, [mode for _ in range(len(data_keys))]))
-            jobs = [pool.apply_async(func=load_metadata, args=(*argument,))  for argument in zx]
+            zx = list(zip([root for _ in range(len(data_keys))], data_keys, [mode for _ in range(len(data_keys))]))
+            jobs = [pool.apply_async(func=load_metadata, args=(*argument,)) for argument in zx]
             for job in tqdm(jobs, desc=f"Loading {mode} data"):
                 a, l = job.get()
                 self.annotations.update(a)
@@ -62,7 +64,6 @@ class Flickr30k(VisionDataset):
         self.ids = list(sorted(self.annotations.keys()))
         self.word_map = archive.attrs["word_map"].to_dict()
         self.max_cap_len = archive.attrs["max_cap_len"]
-
 
     def __getitem__(self, index: int) -> Tuple[Any, Any]:
         """
@@ -72,7 +73,7 @@ class Flickr30k(VisionDataset):
         Returns:
             tuple: Tuple (image, target). target is a list of captions for the image.
         """
-        img_id = self.ids[index//5]
+        img_id = self.ids[index // 5]
 
         # Image
         img = torch.Tensor(np.copy(self.archive[img_id][:]))
@@ -82,20 +83,20 @@ class Flickr30k(VisionDataset):
         mod = self.normalize(img)
 
         # Captions
-        target = self.annotations[img_id][ index % 5 ]
+        target = self.annotations[img_id][index % 5]
         target = torch.Tensor(target).long()
         if self.target_transform is not None:
             target = self.target_transform(target)
 
         # Caption lengths
-        lengths = self.lengths[img_id][ index % 5 ]
+        lengths = self.lengths[img_id][index % 5]
         lengths = torch.Tensor([lengths]).long()
-        
+
         all_caps = torch.Tensor(self.annotations[img_id]).long()
         return mod, target, lengths, all_caps, img
 
     def __len__(self) -> int:
-        return len(self.ids)*5
+        return len(self.ids) * 5
 
 
 class AugmentedFlickrDataset(Flickr30k):
@@ -118,7 +119,7 @@ class AugmentedFlickrDataset(Flickr30k):
         # mode
         mode="test",
         smoke_test=False,
-        fast_test=False
+        fast_test=False,
     ) -> None:
         super().__init__(
             root,
@@ -128,7 +129,7 @@ class AugmentedFlickrDataset(Flickr30k):
                     transforms.ConvertImageDtype(float32),
                     transforms.Resize(resize),
                     transforms.CenterCrop(224),
-                    #transforms.RandomAffine(degrees=degrees, translate=translate),
+                    # transforms.RandomAffine(degrees=degrees, translate=translate),
                     transforms.GaussianBlur(kernel_size=blur_kernel_mean, sigma=blur_kernel_std),
                     transforms.ColorJitter(brightness=brightness_factor),
                     # Convert to tensor, float [0.0, 255.0]
@@ -136,7 +137,7 @@ class AugmentedFlickrDataset(Flickr30k):
             ),
             mode=mode,
             smoke_test=smoke_test,
-            fast_test=fast_test
+            fast_test=fast_test,
         )
 
     # EfficientNet requires a float tensor with intensities of [0.0, 255.0]

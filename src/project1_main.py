@@ -8,7 +8,7 @@ import os
 from os.path import join
 
 import numpy as np
-from models.utils import load_model_dict, save_model_dict
+from models.model_utils import load_model_dict, save_model_dict
 from models.sat_model import SATDecoder, SATEncoder
 from models.attention import SATAttention
 from data.augmentation import Flickr30k, AugmentedFlickrDataset
@@ -21,16 +21,15 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from utils import EarlyStopping,AverageMeter
+from utils import EarlyStopping, AverageMeter
 
 from tqdm import tqdm
-import metrics_for_imagecaption
 import gradcam
 
 RESULTS_DIRECTORY = os.path.abspath("results/project1")
 DATA_DIRECTORY = os.path.abspath("flickr30k/flickr30k.exdir")
 
-SCHEDULED_SAMPLING_CONVERGENCE = 1/5
+SCHEDULED_SAMPLING_CONVERGENCE = 1 / 5
 LEARNING_RATE = 1e-4
 EPOCHS = 60
 EMBED = 512
@@ -40,6 +39,7 @@ DROP = 0.75
 ENCODER = 1408
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 BATCH_SIZE = 64
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser("Project 1 Main Experiment")
@@ -68,7 +68,7 @@ def train_model(
     trainloader: DataLoader,
     valloader: DataLoader,
     results_path: str,
-    word_map:dict,
+    word_map: dict,
     checkpoint_name: str,
     logger: logging.Logger,
 ):
@@ -78,7 +78,9 @@ def train_model(
     early_stopping_checkpoint = join(results_path, "early_stopping.pt")
     writer = SummaryWriter(os.path.abspath("results/project1/runs"))
     # Early Stopping
-    early_stop = EarlyStopping(checkpoint_path=early_stopping_checkpoint, report_func=logger.info, delta=0.001, patience=20)
+    early_stop = EarlyStopping(
+        checkpoint_path=early_stopping_checkpoint, report_func=logger.info, delta=0.001, patience=20
+    )
 
     # Model Paramerers
     criterion = nn.CrossEntropyLoss()
@@ -114,16 +116,18 @@ def train_model(
         early_stop(bleu4, state)
 
         # report metrics to TensorBoard
-        writer.add_scalars("Train-Val Loss/ Epoch", {
-            "Train Loss": train_metrics["loss"],
-            "Val Loss": val_metrics["loss"]
-        }, global_step=epoch)
+        writer.add_scalars(
+            "Train-Val Loss/ Epoch",
+            {"Train Loss": train_metrics["loss"], "Val Loss": val_metrics["loss"]},
+            global_step=epoch,
+        )
         writer.add_scalar("BLEU4", val_metrics["bleu4"], global_step=epoch)
-        writer.add_scalars("Top 5 Acc", {
-            "train top 5 acc": train_metrics["top 5 acc"],
-            "val top 5 acc": val_metrics["top 5 acc"]
-        }, global_step=epoch)
-        writer.add_image(f"Epoch {epoch}", best_img/255 )
+        writer.add_scalars(
+            "Top 5 Acc",
+            {"train top 5 acc": train_metrics["top 5 acc"], "val top 5 acc": val_metrics["top 5 acc"]},
+            global_step=epoch,
+        )
+        writer.add_image(f"Epoch {epoch}", best_img / 255)
         writer.add_text(f"Epoch {epoch}", f"Predicted caption: {best_caption}", 0)
         writer.add_text(f"Epoch {epoch}", f"Actual caption: {actual_caption}", 1)
         # report best image and caption to TensorBoard
@@ -137,11 +141,11 @@ def evaluate_model(model: nn.Module, test_data_loader: DataLoader):
     # 1. Create encoder, decoder, and stuff that is passed into validate_sat_epoch
     encoder = 0
     decoder = 0
-    for name,param in model.named_parameters:
-        if name in ['encoder']:
+    for name, param in model.named_parameters:
+        if name in ["encoder"]:
             encoder = SATEncoder(params=param)
             break
-        if name in ['decoder']:
+        if name in ["decoder"]:
             decoder = SATDecoder(
                 params=param,
                 embedding_size=EMBED,
@@ -155,8 +159,7 @@ def evaluate_model(model: nn.Module, test_data_loader: DataLoader):
             break
     # Ensure the model has params for encoder, and decoder
     if not (encoder is SATEncoder and decoder is SATDecoder):
-            raise ValueError("Malformed model argument to evaluate_model()")
-
+        raise ValueError("Malformed model argument to evaluate_model()")
 
     encoder.to(DEVICE)
     decoder.to(DEVICE)
@@ -167,14 +170,14 @@ def evaluate_model(model: nn.Module, test_data_loader: DataLoader):
     bleu_4_avg = AverageMeter("bleu_4")
     rouge_avg = AverageMeter("rouge")
     meteor_avg = AverageMeter("meteor")
-    
+
     # 2. Forward propagate through network, capture output, and pass to Calculate_metrics function
 
     # This part is mostly adapted from train.train_sat_epoch()
     for i, (images, captions, caption_lengths, _) in enumerate(tqdm(test_data_loader, f"Evaluation Progress ")):
         images = images.to(device)
         captions = captions.to(device)
-        caption_lengths=caption_lengths.to(device)
+        caption_lengths = caption_lengths.to(device)
 
         # Forward propagate
         images_encoded = encoder(images)
@@ -184,34 +187,36 @@ def evaluate_model(model: nn.Module, test_data_loader: DataLoader):
         y = captions[:, 1:]
 
         # remove unnecessary padding
-        yhat = pack_padded_sequence(predictions, caption_lengths.cpu().squeeze(), batch_first=True, enforce_sorted=False)[0]
+        yhat = pack_padded_sequence(
+            predictions, caption_lengths.cpu().squeeze(), batch_first=True, enforce_sorted=False
+        )[0]
         y = pack_padded_sequence(y, caption_lengths.cpu().squeeze(), batch_first=True, enforce_sorted=False)[0]
 
         # Average all the scores
         metrics = Calculate_metrics(y, yhat)
-        bleu_1_avg.update(metrics['bleu_1'])
-        bleu_2_avg.update(metrics['bleu_2'])
-        bleu_3_avg.update(metrics['bleu_3'])
-        bleu_4_avg.update(metrics['bleu_4'])
-        rouge_avg.update(metrics['rouge'])
-        meteor_avg.update(metrics['meteor'])
-        
+        bleu_1_avg.update(metrics["bleu_1"])
+        bleu_2_avg.update(metrics["bleu_2"])
+        bleu_3_avg.update(metrics["bleu_3"])
+        bleu_4_avg.update(metrics["bleu_4"])
+        rouge_avg.update(metrics["rouge"])
+        meteor_avg.update(metrics["meteor"])
+
         # GradCAM
-        
+
         gcm = gradcam.GradCamModel(model, model.last_layer)
         images_gcm = gcm(images)
         # TODO: I don't really understand the gradcam class so someone else should fill in the rest
 
-
         # END TODO
-    
-    to_return['bleu_1'] = bleu_1_avg.get_average()
-    to_return['bleu_2'] = bleu_2_avg.get_average()
-    to_return['bleu_3'] = bleu_3_avg.get_average()
-    to_return['bleu_4'] = bleu_4_avg.get_average()
-    to_return['rouge']= rouge_avg.get_average()
-    to_return['meteor']= meteor_avg.get_average()
+
+    to_return["bleu_1"] = bleu_1_avg.get_average()
+    to_return["bleu_2"] = bleu_2_avg.get_average()
+    to_return["bleu_3"] = bleu_3_avg.get_average()
+    to_return["bleu_4"] = bleu_4_avg.get_average()
+    to_return["rouge"] = rouge_avg.get_average()
+    to_return["meteor"] = meteor_avg.get_average()
     return to_return
+
 
 def main():
     """Main experiment
@@ -243,7 +248,9 @@ def main():
         # train the model
         if args.augment_data:
             # load augmented dataset
-            train_data = AugmentedFlickrDataset(DATA_DIRECTORY, mode="train", smoke_test=args.smoke_test, fast_test=args.fast_test)
+            train_data = AugmentedFlickrDataset(
+                DATA_DIRECTORY, mode="train", smoke_test=args.smoke_test, fast_test=args.fast_test
+            )
         else:
             train_data = Flickr30k(DATA_DIRECTORY, mode="train", smoke_test=args.smoke_test, fast_test=args.fast_test)
         # no augmentation on validation set
@@ -259,7 +266,7 @@ def main():
         attention_size=ATTENTION,
         encoder_size=ENCODER,
         device=DEVICE,
-        dropout_rate=DROP
+        dropout_rate=DROP,
     )
 
     encoder.to(DEVICE)
@@ -277,11 +284,13 @@ def main():
         # train the model
         trainloader = DataLoader(train_data, num_workers=8, batch_size=BATCH_SIZE)
         valloader = DataLoader(valid_data, num_workers=8, batch_size=BATCH_SIZE)
-        train_model(encoder, decoder, trainloader, valloader, RESULTS_DIRECTORY, train_data.word_map, "checkpoint.pt", logger)
+        train_model(
+            encoder, decoder, trainloader, valloader, RESULTS_DIRECTORY, train_data.word_map, "checkpoint.pt", logger
+        )
 
     if not args.skip_evaluation:
         # no augmentation on test set
-        test_data = Flickr30k(DATA_DIRECTORY, mode="test",num_workers=8, smoke_test=args.smoke_test)
+        test_data = Flickr30k(DATA_DIRECTORY, mode="test", num_workers=8, smoke_test=args.smoke_test)
         testloader = DataLoader(test_data, batch_size=BATCH_SIZE)
         model = load_model_dict(model, best_checkpoint_path)
 

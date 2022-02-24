@@ -33,7 +33,7 @@ class SATEncoder(nn.Module):
 
     def __init__(
         self,
-        encoded_size:int=7,
+        encoded_size: int = 7,
         pretrained: bool = True,
         freeze: bool = True,
         unfreeze_last: int = 0,
@@ -53,7 +53,7 @@ class SATEncoder(nn.Module):
             for param in features.features[unfreeze_last].parameters():
                 param.requires_grad = True
         self.features = features
-        #self.sizing = nn.AdaptiveAvgPool2d((encoded_size, encoded_size))
+        # self.sizing = nn.AdaptiveAvgPool2d((encoded_size, encoded_size))
 
     def forward(self, x: torch.Tensor):
         """Implements the forward pass of the encoder
@@ -71,7 +71,7 @@ class SATEncoder(nn.Module):
             torch.Tensor : encoded image tensor of shape (batch_size, 1280, imag_size//32, image_size//32)
         """
         x = self.features(x)  # (batch_size, 1280, image_size//32, image_size//32 )
-        #x = self.sizing(x) # (batch_size, 1280, encoded_size, encoded_size)
+        # x = self.sizing(x) # (batch_size, 1280, encoded_size, encoded_size)
         return x.permute(0, 2, 3, 1)  # pass encoded values and additional arguments to next layer
 
 
@@ -91,10 +91,10 @@ class SATDecoder(nn.Module):
         vocabulary_size: int,
         max_caption_size: int,
         hidden_size: int,
-        attention_size:int ,
+        attention_size: int,
         encoder_size: int = 1280,
         device: str = "cpu",
-        dropout_rate:float = 0.5
+        dropout_rate: float = 0.5,
     ) -> typing.NoReturn:
         super().__init__()
 
@@ -128,8 +128,8 @@ class SATDecoder(nn.Module):
         self.initialize_weights()
 
     def initialize_weights(self):
-        self.embedding.weight.data.uniform_(-0.1,0.1)
-        self.deep_output.weight.data.uniform_(-0.1,0.1)
+        self.embedding.weight.data.uniform_(-0.1, 0.1)
+        self.deep_output.weight.data.uniform_(-0.1, 0.1)
         self.deep_output.bias.data.fill_(0)
 
     def update_scheduled_sampling_rate(self, convergence_rate: float) -> typing.NoReturn:
@@ -219,7 +219,9 @@ class SATDecoder(nn.Module):
 
         # our predictions will be the size of the largest encoding (batch_size, largest_encoding, vocab_size)
         # each entry of this tensor will have a score for each batch entry, position in encoding, and vocabulary word candidate
-        predictions = torch.zeros(batch_size, self._max_cap_size, vocab_size).to(self._device)  # predictions set to <pad>
+        predictions = torch.zeros(batch_size, self._max_cap_size, vocab_size).to(
+            self._device
+        )  # predictions set to <pad>
         prev_words = torch.zeros((batch_size,)).long().to(self._device)
         αs = torch.zeros(
             batch_size, self._max_cap_size, x.size(1)
@@ -259,11 +261,12 @@ class SATDecoder(nn.Module):
                     torch.cat([embedded, zhat], dim=1),
                     (h, c),
                 )
-                scores = self.deep_output(self.dropout(h)) # assign a score to potential vocabulary candidtates
+                scores = self.deep_output(self.dropout(h))  # assign a score to potential vocabulary candidtates
                 prev_words = torch.argmax(scores, dim=1)
                 predictions[:, i, :] = scores  # append predictions for the i-th token
                 αs[:, i, :] = α  # store attention weights for doubly stochastic regularization
         return predictions, αs
+
 
 class BayesianSATDecoder(nn.Module):
     def __init__(self) -> None:
