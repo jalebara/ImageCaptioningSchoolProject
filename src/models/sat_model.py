@@ -20,6 +20,8 @@ import torchvision.models as models
 import typing
 from typing import Optional
 from .attention import SATAttention
+from .Configuration import Configuration
+import torch.optim as optim
 
 
 class SATEncoder(nn.Module):
@@ -275,3 +277,25 @@ class BayesianSATDecoder(nn.Module):
 
     def forward(self, x):
         raise NotImplementedError
+
+
+# The models, which consolidate encoder, decoder into one class
+    
+class SATModel(nn.Module):
+    def __init__(self, config: Configuration, vocabulary_size, max_caption_size):
+        super().__init__()
+        self.vocabulary_size = vocabulary_size
+        self.max_caption_size = max_caption_size
+        self.encoder = SATEncoder(config.encoded_size, config.pretrained, config.freeze, config.unfreeze_last)
+        self.encoder.to(config.device)
+        self.decoder = SATDecoder(config.embedding_size, vocabulary_size, max_caption_size, config.hidden_size, config.attention_size, config.encoder_size, config.device, config.dropout_rate)
+        self.decoder.to(config.device)
+        self.decoder_optimizer = optim.Adam(params=self.decoder.parameters(), lr=config.learning_rate)
+
+    def forward(self, images, captions, caption_lengths, all_captions):
+        encoded_images = self.encoder(images)
+        predictions, alphas = self.decoder(encoded_images, captions, caption_lengths, False)
+        best_pred = torch.max(predictions, dim=2).tolist()
+        
+        
+
