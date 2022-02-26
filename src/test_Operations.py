@@ -2,8 +2,8 @@ import Operations
 from models.Configuration import ConfigurationForWeightsFile
 
 def main():
-    c = ConfigurationForWeightsFile()
-    t = Operations.Trainer(c, "../best_checkpoint1.pt", "../flickr30k/flickr30k.exdir")
+    t = Operations.Trainer("../best_checkpoint1_fixed.pt", "../flickr30k/flickr30k.exdir", smoke_test=False, fast_test=False)
+    t.train_one_epoch()
     
 
 if __name__=="__main__":

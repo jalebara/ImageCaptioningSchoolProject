@@ -282,20 +282,34 @@ class BayesianSATDecoder(nn.Module):
 # The models, which consolidate encoder, decoder into one class
     
 class SATModel(nn.Module):
-    def __init__(self, config: Configuration, vocabulary_size, max_caption_size):
+    # max_caption_size is intrinsic to data set, device depends on what computer you're running
+    # so these are not stored in the config
+    def __init__(self, config: Configuration, max_caption_size, device):
         super().__init__()
-        self.vocabulary_size = vocabulary_size
         self.max_caption_size = max_caption_size
-        self.encoder = SATEncoder(config.encoded_size, config.pretrained, config.freeze, config.unfreeze_last)
-        self.encoder.to(config.device)
-        self.decoder = SATDecoder(config.embedding_size, vocabulary_size, max_caption_size, config.hidden_size, config.attention_size, config.encoder_size, config.device, config.dropout_rate)
-        self.decoder.to(config.device)
-        self.decoder_optimizer = optim.Adam(params=self.decoder.parameters(), lr=config.learning_rate)
+        self.device = device
+        self.encoder = SATEncoder(config.config_dict['encoded_size'], config.config_dict['pretrained'], config.config_dict['freeze'], config.config_dict['unfreeze_last'])
+        self.decoder = SATDecoder(config.config_dict['embedding_size'], config.config_dict['vocabulary_size'], self.max_caption_size, config.config_dict['hidden_size'], config.config_dict['attention_size'], config.config_dict['encoder_size'], self.device, config.config_dict['dropout_rate'])
+        self.decoder_optimizer = optim.Adam(params=self.decoder.parameters(), lr=config.config_dict['learning_rate'])
+        self.criterion = nn.CrossEntropyLoss()
 
-    def forward(self, images, captions, caption_lengths, all_captions):
+    def forward(self, images, captions, caption_lengths):
+        images = images.to(self.device)
+        captions = captions.to(self.device)
+        caption_lengths = caption_lengths.to(self.device)
         encoded_images = self.encoder(images)
-        predictions, alphas = self.decoder(encoded_images, captions, caption_lengths, False)
-        best_pred = torch.max(predictions, dim=2).tolist()
-        
-        
+        self.predictions, self.alphas = self.decoder(encoded_images, captions, caption_lengths, False)
+        #best_pred = torch.max(self.predictions, dim=2).tolist()
+
+        return self.predictions,self.alphas
+
+    def backward(self, yhat, y):
+        print(y.size())
+        print(yhat.size())
+        loss = self.criterion(yhat, y)
+        loss += 1.0 * ((1.0-self.alphas.sum(dim=1))**2).mean()
+        self.decoder_optimizer.zero_grad()
+        loss.backward()
+        self.decoder_optimizer.step()
+        return loss
 
