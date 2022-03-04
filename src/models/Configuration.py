@@ -24,7 +24,8 @@ class Configuration:
                 'freeze': True,
                 'unfreeze_last': 0,
 
-                'vocabulary_size': 2004
+                #'vocabulary_size': 2004
+                'vocabulary_size': 1004
             }
         else:
             self.config_dict = config_dict

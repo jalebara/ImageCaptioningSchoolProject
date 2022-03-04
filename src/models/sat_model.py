@@ -291,6 +291,7 @@ class SATModel(nn.Module):
         self.encoder = SATEncoder(config.config_dict['encoded_size'], config.config_dict['pretrained'], config.config_dict['freeze'], config.config_dict['unfreeze_last'])
         self.decoder = SATDecoder(config.config_dict['embedding_size'], config.config_dict['vocabulary_size'], self.max_caption_size, config.config_dict['hidden_size'], config.config_dict['attention_size'], config.config_dict['encoder_size'], self.device, config.config_dict['dropout_rate'])
         self.decoder_optimizer = optim.Adam(params=self.decoder.parameters(), lr=config.config_dict['learning_rate'])
+        # TODO: move this to Operations.py
         self.criterion = nn.CrossEntropyLoss()
 
     def forward(self, images, captions, caption_lengths):
@@ -303,13 +304,4 @@ class SATModel(nn.Module):
 
         return self.predictions,self.alphas
 
-    def backward(self, yhat, y):
-        print(y.size())
-        print(yhat.size())
-        loss = self.criterion(yhat, y)
-        loss += 1.0 * ((1.0-self.alphas.sum(dim=1))**2).mean()
-        self.decoder_optimizer.zero_grad()
-        loss.backward()
-        self.decoder_optimizer.step()
-        return loss
 

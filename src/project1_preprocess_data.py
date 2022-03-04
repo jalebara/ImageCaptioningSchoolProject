@@ -71,7 +71,7 @@ def main():
         else:
             store = test_archive
             cap_store = test_captions
-        # store.require_dataset(img_id, data=image)
+        store.require_dataset(img_id, data=image)
         for cap in captions:
             cap_store[img_id].append(cap)
             tokens = nltk.tokenize.word_tokenize(cap.lower())
