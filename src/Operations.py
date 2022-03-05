@@ -30,13 +30,10 @@ class Trainer:
         self.max_caption_size = self.data.max_cap_len
         self.epoch = 0
 
-        # Meters
-        self.loss_meter = AverageMeter("Loss")
-        self.top5_acc_meter = AverageMeter("Top5Acc")
-        self.batch_time_meter = AverageMeter("BatchTime")
         self.n = len(self.data_loader)
         self.bleu4 = BLEUScore(4)
-        self.bleu4_meter = AverageMeter()
+
+        # TODO should put this in data set i think
         self.word_map = self.data.word_map
         self.inv_word_map = {v: k for k, v in self.data.word_map.items()}
 
@@ -68,6 +65,11 @@ class Trainer:
         print("Trainer successfully loaded!")
 
     def train_one_epoch(self):
+        # Meters
+        loss_meter = AverageMeter("Loss")
+        top5_acc_meter = AverageMeter("Top5Acc")
+        batch_time_meter = AverageMeter("BatchTime")
+        bleu4_meter = AverageMeter()
         self.model.encoder.train()
         self.model.decoder.train()
         stats = {
@@ -104,20 +106,20 @@ class Trainer:
 
             # TODO: When I integrate the evaluation class, do all this with that
             # Metrics and progress bar updates
-            self.top5_acc_meter.update(topk_accuracy(yhat, y, 5))
-            self.loss_meter.update(loss.cpu().item())
+            top5_acc_meter.update(topk_accuracy(yhat, y, 5))
+            loss_meter.update(loss.cpu().item())
             bleu4_score = self.bleu4(predicted_captions, references)
-            self.bleu4_meter.update(bleu4_score)
+            bleu4_meter.update(bleu4_score)
             end_time = time.time()
             batch_time = end_time - prev_time
             prev_time = end_time
-            self.batch_time_meter.update(batch_time)
-            time_remaining = calc_time(self.batch_time_meter.get_average() * (self.n - i))
+            batch_time_meter.update(batch_time)
+            time_remaining = calc_time(batch_time_meter.get_average() * (self.n - i))
             pbar.set_postfix(
                 {
-                    "bleu4": f"{self.bleu4_meter.get_average():.4f}",
-                    "top 5 acc": f"{self.top5_acc_meter.get_average():.4f}",
-                    "loss": f"{self.loss_meter.get_average():.4f}",
+                    "bleu4": f"{bleu4_meter.get_average():.4f}",
+                    "top 5 acc": f"{top5_acc_meter.get_average():.4f}",
+                    "loss": f"{loss_meter.get_average():.4f}",
                     "t-minus": time_remaining,
                 }
             )
@@ -129,8 +131,8 @@ class Trainer:
         # TODO Write validate class and validate the epoch here
         
         return {
-            "top 5 acc": self.top5_acc_meter.get_average(),
-            "loss": self.loss_meter.get_average(),
+            "top 5 acc": top5_acc_meter.get_average(),
+            "loss": loss_meter.get_average(),
             "epoch_time": time.time() - start_time,
         }
 
@@ -142,6 +144,9 @@ class Trainer:
             stats.append(self.train_one_epoch())
 
         return stats
+
+    def validate_epoch(self):
+        return -1
         
     def update(self, yhat, y, alphas):
         loss = self.criterion(yhat, y)
@@ -193,9 +198,6 @@ class Trainer:
             return False
         torch.save(state, location)
         return True
-
-# TODO
-# class Validator:
 
 # TODO
 # class Evaluator:
