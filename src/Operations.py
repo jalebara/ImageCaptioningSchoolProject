@@ -12,19 +12,58 @@ from utils import AverageMeter, calc_time, topk_accuracy
 from torchmetrics import BLEUScore
 import time
 from torch.utils.data import DataLoader
+from utils import NLPMetricAggregator
 
-
-# model_type in ctor currently unused, will be used with Bayesian SAT
-class Trainer:
-    # If a config is given, use that and create a new weights file
-    # If a config is not given, check that the weights file exists and if it does, load that
-    def __init__(self, weights_file: str, exdir_data_location, smoke_test=False, fast_test=False, model_type="SAT", config: Configuration=None, criterion=nn.CrossEntropyLoss(), batch_size=64):
+class Operations:
+    def __init__(self, weights_file: str, exdir_data_location, smoke_test=False, fast_test=False, config: Configuration=None, criterion=nn.CrossEntropyLoss(), batch_size=64):
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.weights_file = weights_file
         self.smoke_test = smoke_test
         self.fast_test = fast_test
-        self.model_type = model_type
-        
+
+    # remove_start_token should be true for y, false for yhat
+    def remove_caption_padding(self, captions, caption_lengths, remove_start_token: bool = False):
+        # remove <start> token for backpropagation
+        if remove_start_token:
+            y = captions[:, 1:]
+        else:
+            y = captions
+
+        # Remove extra padding
+        y = pack_padded_sequence(y, caption_lengths.cpu().squeeze(), batch_first=True, enforce_sorted=False)[0]
+        return y
+
+    # Captions should be a tensor of captions, not a list
+    # idk how to put this in python so I'm leaving this in a comment
+    # Either way, "captions is list" returns false so I can't do that
+    def caption_numbers_to_words(self, captions, validate=False):
+        captions = captions.tolist()
+        captions_words = []
+        if validate == False:
+            for k in range(len(captions)):
+                p = captions[k]
+                temp = [f"{self.data.inv_word_map[t]} " for t in p if t not in [self.data.word_map["<pad>"], self.data.word_map["<start>"]]]
+                captions_words.append("".join(temp))
+
+        else:
+            for k in range(len(captions)):
+                p = captions[k]
+                temp = [f"{self.validate_data.inv_word_map[t]} " for t in p if t not in [self.validate_data.word_map["<pad>"], self.validate_data.word_map["<start>"]]]
+                captions_words.append("".join(temp))        
+
+        return captions_words
+
+        # When implementing beam search, inherit this class and modify this function
+    def get_best_prediction(self, predictions):
+        _, preds = torch.max(predictions, dim=2)
+        return preds
+
+# model_type in ctor currently unused, will be used with Bayesian SAT
+class Trainer(Operations):
+    # If a config is given, use that and create a new weights file
+    # If a config is not given, check that the weights file exists and if it does, load that
+    def __init__(self, weights_file: str, exdir_data_location, smoke_test=False, fast_test=False, config: Configuration=None, criterion=nn.CrossEntropyLoss(), batch_size=64):
+        super().__init__(weights_file, exdir_data_location, smoke_test, fast_test, config, criterion, batch_size)
         self.data = Flickr30k(exdir_data_location, mode="train", smoke_test=smoke_test, fast_test=fast_test)
         self.data_loader = DataLoader(self.data, num_workers=0, batch_size=batch_size)
 
@@ -234,43 +273,6 @@ class Trainer:
             self.model.decoder_optimizer.step()
         return loss
 
-    # remove_start_token should be true for y, false for yhat
-    def remove_caption_padding(self, captions, caption_lengths, remove_start_token: bool = False):
-        # remove <start> token for backpropagation
-        if remove_start_token:
-            y = captions[:, 1:]
-        else:
-            y = captions
-
-        # Remove extra padding
-        y = pack_padded_sequence(y, caption_lengths.cpu().squeeze(), batch_first=True, enforce_sorted=False)[0]
-        return y
-
-    # Captions should be a tensor of captions, not a list
-    # idk how to put this in python so I'm leaving this in a comment
-    # Either way, "captions is list" returns false so I can't do that
-    def caption_numbers_to_words(self, captions, validate=False):
-        captions = captions.tolist()
-        captions_words = []
-        if validate == False:
-            for k in range(len(captions)):
-                p = captions[k]
-                temp = [f"{self.data.inv_word_map[t]} " for t in p if t not in [self.data.word_map["<pad>"], self.data.word_map["<start>"]]]
-                captions_words.append("".join(temp))
-
-        else:
-            for k in range(len(captions)):
-                p = captions[k]
-                temp = [f"{self.validate_data.inv_word_map[t]} " for t in p if t not in [self.validate_data.word_map["<pad>"], self.validate_data.word_map["<start>"]]]
-                captions_words.append("".join(temp))        
-
-        return captions_words
-
-    # When implementing beam search, inherit this class and modify this function
-    def get_best_prediction(self, predictions):
-        _, preds = torch.max(predictions, dim=2)
-        return preds
-
     def save_state(self, overwrite: bool = False, alternate_location: str=None):
         location = self.weights_file if alternate_location is None else alternate_location
         state = {
@@ -285,4 +287,69 @@ class Trainer:
         return True
 
 # TODO
-# class Evaluator:
+class Evaluator(Operations):
+    def __init__(self, weights_file: str, exdir_data_location, smoke_test=False, fast_test=False, config: Configuration=None, criterion=nn.CrossEntropyLoss(), batch_size=64):
+        super().__init__(weights_file, exdir_data_location, smoke_test, fast_test, config, criterion, batch_size)
+        self.data = Flickr30k(exdir_data_location, mode="test", smoke_test=smoke_test, fast_test=fast_test)
+        # Only process one image at a time so batch_size=1
+        self.data_loader = DataLoader(self.data, num_workers=0, batch_size=1)
+        
+        self.max_caption_size = self.data.max_cap_len
+
+        self.n = len(self.data_loader)
+        self.bleu4 = BLEUScore(4)
+
+        self.criterion = criterion
+
+        self.MetricsAggregator = NLPMetricAggregator()
+        
+        if (config is not None):
+            if (not os.path.exists(weights_file)):
+                self.config = config
+                self.model = SATModel(self.config, self.max_caption_size, self.device)
+                self.model.encoder.eval()
+                self.model.decoder.eval()
+                self.model.encoder.to(self.device)
+                self.model.decoder.to(self.device)
+            else:
+                print("Weights file exists, but configuration was given")
+        else:
+            # Load the weights, if the weights file exists
+            if os.path.exists(weights_file):
+                print("Weights file exists, loading...")
+                state = torch.load(weights_file, self.device)
+                self.config = state["config"]
+                self.model = SATModel(self.config, self.max_caption_size, self.device)
+                self.model.encoder.load_state_dict(state["encoder"])
+                self.model.decoder.load_state_dict(state["decoder"])
+            else:
+                print("Weights file does not exist, and no configuration was given")
+        print("Trainer successfully loaded!")
+
+    def evaluate(self):
+        self.model.encoder.eval()
+        self.model.decoder.eval()
+        for i, (images, captions, caption_lengths, all_captions, _) in enumerate(
+        pbar := tqdm(self.data_loader, "Evaluation Progress")
+        ):
+            images = images.to(self.device)
+            captions = captions.to(self.device)
+            caption_lengths = caption_lengths.to(self.device)
+
+            # Forward
+            predictions, alphas = self.model.forward(images, captions, caption_lengths)
+            # Caption/prediction numbers to words
+            references = []
+            for j in range(all_captions.shape[0]):  # iterate over batches
+                ref_caps = all_captions[j]
+                references.append(self.caption_numbers_to_words(ref_caps, validate=False))
+
+            preds = self.get_best_prediction(predictions)
+            predicted_captions = self.caption_numbers_to_words(preds, validate=False)
+                
+            assert len(predicted_captions) == len(references)
+
+            self.MetricsAggregator.update(predicted=predicted_captions, reference=references)
+
+        return self.MetricsAggregator.generate_metric_summaries()
+            
