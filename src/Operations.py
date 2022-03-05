@@ -26,7 +26,11 @@ class Trainer:
         self.model_type = model_type
         
         self.data = Flickr30k(exdir_data_location, mode="train", smoke_test=smoke_test, fast_test=fast_test)
-        self.data_loader = DataLoader(self.data, num_workers=8, batch_size=batch_size)
+        self.data_loader = DataLoader(self.data, num_workers=0, batch_size=batch_size)
+
+        self.validate_data = Flickr30k(exdir_data_location, mode="valid", smoke_test=smoke_test, fast_test=fast_test)
+        self.validate_data_loader = DataLoader(self.validate_data, num_workers=8, batch_size=batch_size)
+        
         self.max_caption_size = self.data.max_cap_len
         self.epoch = 0
 
@@ -36,6 +40,9 @@ class Trainer:
         # TODO should put this in data set i think
         self.word_map = self.data.word_map
         self.inv_word_map = {v: k for k, v in self.data.word_map.items()}
+
+        self.validate_word_map = self.validate_data.word_map
+        self.validate_inv_word_map = {v: k for k, v in self.validate_data.word_map.items()}
 
         self.criterion = criterion
         
@@ -127,8 +134,6 @@ class Trainer:
             # To save in a different location, set alternate_location
             # I just don't want a file overwritten accidentally
             self.save_state(overwrite=False, alternate_location=None)
-
-        # TODO Write validate class and validate the epoch here
         
         return {
             "top 5 acc": top5_acc_meter.get_average(),
@@ -139,21 +144,101 @@ class Trainer:
     # 12 chosen as default because Jeffrey said it converged pretty well at 12 epochs
     def train(self, epochs=12):
         # Keep training stats just in case
-        stats = []
-        for i in range(1, epochs):
-            stats.append(self.train_one_epoch())
+        train_stats = []
+        validate_stats = []
+        
+        for i in range(0, epochs):
+            train_stats.append(self.train_one_epoch())
+            validate_stats.append(self.validate_epoch())
 
-        return stats
+        return train_stats, validate_stats
 
     def validate_epoch(self):
-        return -1
+        loss_meter = AverageMeter()
+        top5_acc_meter = AverageMeter()
+        batch_time_meter = AverageMeter()
+        bleu4_meter = AverageMeter()
         
-    def update(self, yhat, y, alphas):
+        self.model.encoder.eval()
+        self.model.decoder.eval()
+
+        stats = {
+            "top 5 acc": f"{0:.4f}",
+            "loss": f"{0:.4f}",
+            "time t-minus": "unknown",
+        }
+
+        prev_time = time.time()
+        best_bleu = 0.0
+        best_img = None
+        best_caption = None
+        
+        with torch.no_grad():
+            for i, (images, captions, caption_lengths, all_captions, orig_imgs) in enumerate(
+                pbar := tqdm(self.validate_data_loader, f"Epoch {self.epoch+1} Validate Progress ", postfix=stats)
+            ):
+                # Forward
+                predictions,alphas=self.model.forward(images, captions, caption_lengths)
+
+                # Clean captions and predictions
+                y = self.remove_caption_padding(captions, caption_lengths, True)
+                yhat = self.remove_caption_padding(predictions, caption_lengths, False)
+
+                # Get loss (loss only, no update)
+                loss = self.update(yhat, y, alphas, loss_only=True)
+                loss_meter.update(loss.item())
+                
+                # Caption/prediction numbers to words
+                references = []
+                for j in range(all_captions.shape[0]):  # iterate over batches
+                    ref_caps = all_captions[j]
+                    references.append(self.caption_numbers_to_words(ref_caps, validate=True))
+
+                preds = self.get_best_prediction(predictions)
+                predicted_captions = self.caption_numbers_to_words(preds, validate=True)
+                
+                assert len(predicted_captions) == len(references)
+
+                end_time = time.time()
+                batch_time = end_time - prev_time
+                prev_time = end_time
+                batch_time_meter.update(batch_time)
+                time_remaining = calc_time(batch_time_meter.get_average() * (self.n - i))
+                top5_acc_meter.update(topk_accuracy(yhat, y, 5))
+                bleu4_score = self.bleu4(predicted_captions, references)
+                if best_bleu <= bleu4_score:
+                    best_bleu = bleu4_score
+                    best_img = orig_imgs[0]
+                    best_caption = predicted_captions[0]
+                    actual_reference = references[0][0]
+                bleu4_meter.update(bleu4_score)
+                pbar.set_postfix(
+                    {
+                        "bleu4": f"{bleu4_meter.get_average():.4f}",
+                        "top 5 acc": f"{top5_acc_meter.get_average():.4f}",
+                        "loss": f"{loss_meter.get_average():.4f}",
+                        "t-minus": time_remaining,
+                    }
+            )
+
+            return (
+                {
+                    "bleu4": bleu4_meter.get_average(),
+                    "top 5 acc": top5_acc_meter.get_average(),
+                    "loss": loss_meter.get_average(),
+                },
+                best_img.cpu(),
+                best_caption,
+                actual_reference,
+            )    
+        
+    def update(self, yhat, y, alphas, loss_only = False):
         loss = self.criterion(yhat, y)
         loss += 1.0 * ((1.0-alphas.sum(dim=1))**2).mean()
-        self.model.decoder_optimizer.zero_grad()
-        loss.backward()
-        self.model.decoder_optimizer.step()
+        if loss_only == False:
+            self.model.decoder_optimizer.zero_grad()
+            loss.backward()
+            self.model.decoder_optimizer.step()
         return loss
 
     # remove_start_token should be true for y, false for yhat
@@ -171,13 +256,20 @@ class Trainer:
     # Captions should be a tensor of captions, not a list
     # idk how to put this in python so I'm leaving this in a comment
     # Either way, "captions is list" returns false so I can't do that
-    def caption_numbers_to_words(self, captions):
+    def caption_numbers_to_words(self, captions, validate=False):
         captions = captions.tolist()
         captions_words = []
-        for k in range(len(captions)):
-            p = captions[k]
-            temp = [f"{self.inv_word_map[t]} " for t in p if t not in [self.word_map["<pad>"], self.word_map["<start>"]]]
-            captions_words.append("".join(temp))
+        if validate == False:
+            for k in range(len(captions)):
+                p = captions[k]
+                temp = [f"{self.inv_word_map[t]} " for t in p if t not in [self.word_map["<pad>"], self.word_map["<start>"]]]
+                captions_words.append("".join(temp))
+
+        else:
+            for k in range(len(captions)):
+                p = captions[k]
+                temp = [f"{self.validate_inv_word_map[t]} " for t in p if t not in [self.validate_word_map["<pad>"], self.validate_word_map["<start>"]]]
+                captions_words.append("".join(temp))        
 
         return captions_words
 
