@@ -37,13 +37,6 @@ class Trainer:
         self.n = len(self.data_loader)
         self.bleu4 = BLEUScore(4)
 
-        # TODO should put this in data set i think
-        self.word_map = self.data.word_map
-        self.inv_word_map = {v: k for k, v in self.data.word_map.items()}
-
-        self.validate_word_map = self.validate_data.word_map
-        self.validate_inv_word_map = {v: k for k, v in self.validate_data.word_map.items()}
-
         self.criterion = criterion
         
         if (config is not None):
@@ -262,13 +255,13 @@ class Trainer:
         if validate == False:
             for k in range(len(captions)):
                 p = captions[k]
-                temp = [f"{self.inv_word_map[t]} " for t in p if t not in [self.word_map["<pad>"], self.word_map["<start>"]]]
+                temp = [f"{self.data.inv_word_map[t]} " for t in p if t not in [self.data.word_map["<pad>"], self.data.word_map["<start>"]]]
                 captions_words.append("".join(temp))
 
         else:
             for k in range(len(captions)):
                 p = captions[k]
-                temp = [f"{self.validate_inv_word_map[t]} " for t in p if t not in [self.validate_word_map["<pad>"], self.validate_word_map["<start>"]]]
+                temp = [f"{self.validate_data.inv_word_map[t]} " for t in p if t not in [self.validate_data.word_map["<pad>"], self.validate_data.word_map["<start>"]]]
                 captions_words.append("".join(temp))        
 
         return captions_words
