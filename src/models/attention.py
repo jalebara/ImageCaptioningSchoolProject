@@ -8,9 +8,12 @@ This module should contain the following
 - Bayesian Multi Headed Visual Attention
 """
 
+from optparse import Option
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from typing import NoReturn, Optional
+import math
 
 
 class SATAttention(nn.Module):
@@ -45,9 +48,67 @@ class SATAttention(nn.Module):
 class Attention(nn.Module):
     """Implements Scaled Dot Product Attention"""
 
-    def __init__(self) -> None:
+    def __init__(self, vocab_size: int, key_size: int, value_size: int, num_heads: int) -> NoReturn:
+        """Initializer function for scaled dot product attention
+        Args:
+            vocab_size (int):  the number of words in the model's vocabulary
+            key_size (int): Key dimension
+            value_size (int): size of feature array
+            num_heads (int): The number of heads in attention
+        """
         super().__init__()
+        self.vocab_size = vocab_size
+        self.key_size = key_size
+        self.value_size = value_size
+        self.num_heads = num_heads
+        self.softmax = nn.Softmax(dim=-1)
+        self.scale = 1/math.sqrt(key_size)
+
+        # Layers to reshape inputs and generate multiheaded subspaces
+        # Linear layers represent the flattened attention heads
+        self.keygen = nn.Linear(vocab_size, num_heads * key_size)
+        self.querygen = nn.Linear(vocab_size, num_heads * key_size)
+        self.valuegen = nn.Linear(vocab_size, num_heads * value_size)
+        self.output = nn.Linear(num_heads * value_size, vocab_size)
+
+    def _initialize_weights(self):
+        """Initializes the model weights to a uniform distribution.
+        The main reason behind this is that using the uniform distribution
+        to initialize the model weights encourages faster convergence.
+        """
         raise NotImplementedError
+
+    def forward(
+        self,
+        queries: torch.Tensor,
+        keys: torch.Tensor,
+        values: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        attention_weights: Optional[torch.Tensor] = None,
+    ) -> tuple:
+        """ Performs the forward pass of the Scaled Dot Product Attention.
+
+        """
+        num_queries = queries.size(1)
+        num_keys = keys.size(1)
+        batch_size = keys.size(0)
+        
+        # Flattened keys queries, and values
+        queries = self.querygen(queries)
+        keys = self.keygen(keys)
+        values = self.valuegen(values)
+
+        # Unflatten keys, queries, and values
+        # shape should be (batch_size, heads, *, *)
+        queries = queries.view(batch_size, num_queries, self.num_heads, self.key_size)
+        queries = queries.permute(0,2,1,3)
+
+        keys = keys.view(batch_size, num_keys, self.num_heads, self.key_size)
+        keys = keys.permute(0,2,1,3)
+
+        values = values.view(batch_size, )
+        
+        return 11, 11
 
 
 class MultiHeadedAttention(nn.Module):
@@ -55,6 +116,10 @@ class MultiHeadedAttention(nn.Module):
         super().__init__()
         raise NotImplementedError
 
+class MemoryEnhancedAttention(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        raise NotImplementedError
 
 class BayesianAttention(Attention):
     def __init__(self) -> None:

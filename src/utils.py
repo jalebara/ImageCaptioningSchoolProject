@@ -9,12 +9,12 @@ from torchmetrics import BLEUScore
 from torchmetrics.text.rouge import ROUGEScore
 from nltk.translate.meteor_score import meteor_score
 from nltk.tokenize import word_tokenize
-from functools  import wraps
+from functools import wraps
 
 
 class NLPMetricAggregator(object):
-    """ Class for aggregating caption hypotheses and generating NLP metrics
-    """
+    """Class for aggregating caption hypotheses and generating NLP metrics"""
+
     def __init__(self) -> None:
         self._predicted_captions = []
         self._reference_captions = []
@@ -25,13 +25,12 @@ class NLPMetricAggregator(object):
         self.rouge = ROUGEScore()
 
     def update(self, predicted: list, reference: list):
-        """Store predictions and references
-        """
+        """Store predictions and references"""
         self._predicted_captions.extend(predicted)
         self._reference_captions.extend(reference)
 
     def generate_metric_summaries(self):
-        """ Retrieves NLP metrics 
+        """Retrieves NLP metrics
         Returns:
             (dict): A dictionary of NLP metrics generated from stored hypotheses and references
         """
@@ -115,4 +114,3 @@ def topk_accuracy(yhat: torch.Tensor, y: torch.Tensor, k: int):
     correct = idx.eq(y.view(-1, 1).expand_as(idx))
     correct = correct.view(-1).float().sum()
     return correct.item() / batch_size * 100.0
-
