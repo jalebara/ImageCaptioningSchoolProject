@@ -63,6 +63,7 @@ class Flickr30k(VisionDataset):
                 self.lengths.update(l)
         self.ids = list(sorted(self.annotations.keys()))
         self.word_map = archive.attrs["word_map"].to_dict()
+        self.inv_word_map = {v: k for k, v in self.word_map.items()}
         self.max_cap_len = archive.attrs["max_cap_len"]
 
     def __getitem__(self, index: int) -> Tuple[Any, Any]:

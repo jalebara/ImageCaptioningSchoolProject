@@ -19,8 +19,12 @@ class ModelComposition(CaptioningModel):
     def forward(self, x):
         return self.model(x)
 
+<<<<<<< HEAD
 
 def save_project_state(
+=======
+def save_model_dict(
+>>>>>>> 701f8125079134a6ce5c482f2521384ad6af7155
     path: str,
     encoder: CaptioningModel,
     decoder: CaptioningModel,
@@ -48,7 +52,7 @@ def save_project_state(
     torch.save(state, path)
 
 
-def load_project_state(
+def load_model_dict(
     path: str,
     encoder: CaptioningModel,
     decoder: CaptioningModel,

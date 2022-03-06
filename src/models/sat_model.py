@@ -20,6 +20,8 @@ import torchvision.models as models
 import typing
 from typing import Optional
 from .attention import SATAttention
+from .Configuration import Configuration
+import torch.optim as optim
 
 
 class SATEncoder(nn.Module):
@@ -275,3 +277,31 @@ class BayesianSATDecoder(nn.Module):
 
     def forward(self, x):
         raise NotImplementedError
+
+
+# The models, which consolidate encoder, decoder into one class
+    
+class SATModel(nn.Module):
+    # max_caption_size is intrinsic to data set, device depends on what computer you're running
+    # so these are not stored in the config
+    def __init__(self, config: Configuration, max_caption_size, device):
+        super().__init__()
+        self.max_caption_size = max_caption_size
+        self.device = device
+        self.encoder = SATEncoder(config.config_dict['encoded_size'], config.config_dict['pretrained'], config.config_dict['freeze'], config.config_dict['unfreeze_last'])
+        self.decoder = SATDecoder(config.config_dict['embedding_size'], config.config_dict['vocabulary_size'], self.max_caption_size, config.config_dict['hidden_size'], config.config_dict['attention_size'], config.config_dict['encoder_size'], self.device, config.config_dict['dropout_rate'])
+        self.decoder_optimizer = optim.Adam(params=self.decoder.parameters(), lr=config.config_dict['learning_rate'])
+        # TODO: move this to Operations.py
+        self.criterion = nn.CrossEntropyLoss()
+
+    def forward(self, images, captions, caption_lengths):
+        images = images.to(self.device)
+        captions = captions.to(self.device)
+        caption_lengths = caption_lengths.to(self.device)
+        encoded_images = self.encoder(images)
+        self.predictions, self.alphas = self.decoder(encoded_images, captions, caption_lengths, False)
+        #best_pred = torch.max(self.predictions, dim=2).tolist()
+
+        return self.predictions,self.alphas
+
+
