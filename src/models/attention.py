@@ -72,13 +72,6 @@ class Attention(nn.Module):
         self.valuegen = nn.Linear(vocab_size, num_heads * value_size)
         self.output = nn.Linear(num_heads * value_size, vocab_size)
 
-    def _initialize_weights(self) -> NoReturn:
-        """_summary_
-
-        Returns:
-            NoReturn: _description_
-        """
-
         # Xavier Uniform yields good initialization
         nn.init.xavier_uniform_(self.keygen.weight)
         nn.init.xavier_uniform_(self.querygen.weight)
@@ -167,11 +160,14 @@ class Attention(nn.Module):
         batch_size = keys.size(0)
         queries, keys, values = self.preprocess_inputs(queries, keys, values)
         attention = torch.matmul(queries, torch.transpose(keys)) / self.scale
+
         # Pass in information from previous layers
         attention = self.process_masks_and_weights(attention_mask, attention_weights)
+
         # complete attention computation
         attention = torch.softmax(attention, dim=-1)
         output = torch.matmul(attention, values)
+        
         # reshape
         output = output.permute(0, 2, 1, 3).contiguous().view(batch_size, num_queries, self.num_heads * self.value_size)
         output = self.output(output)
@@ -216,20 +212,28 @@ class AttentionWithMemory(Attention):
         num_keys = keys.size(1)
         batch_size = keys.size(0)
 
+        # Reshape memory
+        mem_key = np.sqrt(self.key_size) * self.mem_keys.expand(batch_size, self.num_mem_slots, self.num_heads * self.key_size)
+        mem_val = np.sqrt(self.num_mem_slots) * self.mem_values.expand(batch_size, self.num_mem_slots, self.num_heads * self.value_size)
+
         # Flattened keys queries, and values
         queries = self.querygen(queries)
+
         keys = self.keygen(keys)
+        keys = torch.cat([keys, mem_key], dim=1)
+
         values = self.valuegen(values)
+        values = torch.cat([values, mem_val], dim=1)
 
         # Unflatten keys, queries, and values
         # shape should be (batch_size, heads, *, *)
         queries = queries.view(batch_size, num_queries, self.num_heads, self.key_size)
         queries = queries.permute(0, 2, 1, 3)
 
-        keys = keys.view(batch_size, num_keys, self.num_heads, self.key_size)
+        keys = keys.view(batch_size, num_keys + self.num_mem_slots, self.num_heads, self.key_size)
         keys = keys.permute(0, 2, 3, 1)
 
-        values = values.view(batch_size, num_keys, self.num_heads, self.value_size)
+        values = values.view(batch_size, num_keys + self.num_mem_slots, self.num_heads, self.value_size)
         values = values.permute(0, 2, 3, 1)
 
         return queries, keys, values
