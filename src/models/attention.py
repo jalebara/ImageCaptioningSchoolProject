@@ -9,6 +9,7 @@ This module should contain the following
 """
 
 from optparse import Option
+from turtle import forward
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -45,11 +46,16 @@ class SATAttention(nn.Module):
         # Return values
         return (zhat, alpha)
 
+############################################
+##
+## Meshed Memory Transformer
+##
+############################################
 
 class Attention(nn.Module):
     """Implements Scaled Dot Product Attention"""
 
-    def __init__(self, vocab_size: int, key_size: int, value_size: int, num_heads: int) -> NoReturn:
+    def __init__(self, out_size: int, key_size: int, value_size: int, num_heads: int) -> NoReturn:
         """Initializer function for scaled dot product attention
         Args:
             vocab_size (int):  the number of words in the model's vocabulary
@@ -58,7 +64,7 @@ class Attention(nn.Module):
             num_heads (int): The number of heads in attention
         """
         super().__init__()
-        self.vocab_size = vocab_size
+        self.vocab_size = out_size
         self.key_size = key_size
         self.value_size = value_size
         self.num_heads = num_heads
@@ -67,10 +73,10 @@ class Attention(nn.Module):
 
         # Layers to reshape inputs and generate multiheaded subspaces
         # Linear layers represent the flattened attention heads
-        self.keygen = nn.Linear(vocab_size, num_heads * key_size)
-        self.querygen = nn.Linear(vocab_size, num_heads * key_size)
-        self.valuegen = nn.Linear(vocab_size, num_heads * value_size)
-        self.output = nn.Linear(num_heads * value_size, vocab_size)
+        self.keygen = nn.Linear(out_size, num_heads * key_size)
+        self.querygen = nn.Linear(out_size, num_heads * key_size)
+        self.valuegen = nn.Linear(out_size, num_heads * value_size)
+        self.output = nn.Linear(num_heads * value_size, out_size)
 
         # Xavier Uniform yields good initialization
         nn.init.xavier_uniform_(self.keygen.weight)
@@ -167,7 +173,7 @@ class Attention(nn.Module):
         # complete attention computation
         attention = torch.softmax(attention, dim=-1)
         output = torch.matmul(attention, values)
-        
+
         # reshape
         output = output.permute(0, 2, 1, 3).contiguous().view(batch_size, num_queries, self.num_heads * self.value_size)
         output = self.output(output)
@@ -266,11 +272,49 @@ class AttentionWithMemory(Attention):
         return attention
 
 
-class MultiHeadedAttention(nn.Module):
-    def __init__(self) -> None:
-        super().__init__()
-        raise NotImplementedError
+class AttentionLayer(nn.Module):
+    def __init__(self, out_size:int, key_size:int, value_size:int, num_heads:int, dropout:float=0.5, num_memory_slots:Optional[int]=None) -> NoReturn:
+        """Wrapper around the attention module to add the other components in the paper
 
+        The Meshed Memory paper includes residual connections between each attention module. This class implements that and also 
+        incorporates dropout regularization which will absolutely be needed given the data size.
+
+        Args:
+            out_size (int): intermediate dimension between attention layers
+            key_size (int): dimensionality of keys
+            value_size (int): dimensionality of values
+            num_heads (int): number of attention heads
+            dropout (float, optional): dropout rate. Defaults to 0.5.
+            num_memory_slots (Optional[int], optional): number of memory slots to use. Defaults to None.
+
+        Returns:
+            NoReturn: _description_
+        """
+        super().__init__()
+        if num_memory_slots is not None:
+            self.attention = AttentionWithMemory(out_size, key_size, value_size, num_heads, num_memory_slots)
+        else:
+            self.attention = Attention(out_size, key_size, value_size, num_heads)
+        self.dropout = nn.Dropout(dropout)
+        self.norm = nn.LayerNorm(out_size)
+    
+    def forward(self, queries:torch.Tensor, keys:torch.Tensor, values:torch.Tensor, attention_mask:Optional[torch.Tensor]=None, attention_weights:Optional[torch.Tensor]=None) -> torch.Tensor:
+        """_summary_
+
+        Args:
+            queries (torch.Tensor): _description_
+            keys (torch.Tensor): _description_
+            values (torch.Tensor): _description_
+            attention_mask (Optional[torch.Tensor], optional): _description_. Defaults to None.
+            attention_weights (Optional[torch.Tensor], optional): _description_. Defaults to None.
+
+        Returns:
+            torch.Tensor: _description_
+        """
+        output = self.attention(queries, keys, values, attention_mask, attention_weights)
+        output = self.dropout(output)
+        output = self.norm(output + queries)
+        return output
 
 class BayesianAttention(Attention):
     def __init__(self) -> None:
@@ -283,6 +327,3 @@ class BayesianMultiHeadedAttention(nn.Module):
         super().__init__()
         raise NotImplementedError
 
-
-def train_single_epoch():
-    raise NotImplementedError
