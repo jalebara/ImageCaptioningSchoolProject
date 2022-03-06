@@ -14,8 +14,18 @@ import time
 from torch.utils.data import DataLoader
 from utils import NLPMetricAggregator
 
+
 class Operations:
-    def __init__(self, weights_file: str, exdir_data_location, smoke_test=False, fast_test=False, config: Configuration=None, criterion=nn.CrossEntropyLoss(), batch_size=64):
+    def __init__(
+        self,
+        weights_file: str,
+        exdir_data_location,
+        smoke_test=False,
+        fast_test=False,
+        config: Configuration = None,
+        criterion=nn.CrossEntropyLoss(),
+        batch_size=64,
+    ):
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.weights_file = weights_file
         self.smoke_test = smoke_test
@@ -42,34 +52,53 @@ class Operations:
         if validate == False:
             for k in range(len(captions)):
                 p = captions[k]
-                temp = [f"{self.data.inv_word_map[t]} " for t in p if t not in [self.data.word_map["<pad>"], self.data.word_map["<start>"]]]
+                temp = [
+                    f"{self.data.inv_word_map[t]} "
+                    for t in p
+                    if t not in [self.data.word_map["<pad>"], self.data.word_map["<start>"]]
+                ]
                 captions_words.append("".join(temp))
 
         else:
             for k in range(len(captions)):
                 p = captions[k]
-                temp = [f"{self.validate_data.inv_word_map[t]} " for t in p if t not in [self.validate_data.word_map["<pad>"], self.validate_data.word_map["<start>"]]]
-                captions_words.append("".join(temp))        
+                temp = [
+                    f"{self.validate_data.inv_word_map[t]} "
+                    for t in p
+                    if t not in [self.validate_data.word_map["<pad>"], self.validate_data.word_map["<start>"]]
+                ]
+                captions_words.append("".join(temp))
 
         return captions_words
 
         # When implementing beam search, inherit this class and modify this function
+
     def get_best_prediction(self, predictions):
         _, preds = torch.max(predictions, dim=2)
         return preds
+
 
 # model_type in ctor currently unused, will be used with Bayesian SAT
 class Trainer(Operations):
     # If a config is given, use that and create a new weights file
     # If a config is not given, check that the weights file exists and if it does, load that
-    def __init__(self, weights_file: str, exdir_data_location, smoke_test=False, fast_test=False, config: Configuration=None, criterion=nn.CrossEntropyLoss(), batch_size=64):
+    def __init__(
+        self,
+        weights_file: str,
+        exdir_data_location,
+        smoke_test=False,
+        fast_test=False,
+        config: Configuration = None,
+        criterion=nn.CrossEntropyLoss(),
+        batch_size=64,
+    ):
         super().__init__(weights_file, exdir_data_location, smoke_test, fast_test, config, criterion, batch_size)
         self.data = Flickr30k(exdir_data_location, mode="train", smoke_test=smoke_test, fast_test=fast_test)
         self.data_loader = DataLoader(self.data, num_workers=0, batch_size=batch_size)
 
         self.validate_data = Flickr30k(exdir_data_location, mode="valid", smoke_test=smoke_test, fast_test=fast_test)
         self.validate_data_loader = DataLoader(self.validate_data, num_workers=8, batch_size=batch_size)
-        
+
         self.max_caption_size = self.data.max_cap_len
         self.epoch = 0
 
@@ -77,9 +106,9 @@ class Trainer(Operations):
         self.bleu4 = BLEUScore(4)
 
         self.criterion = criterion
-        
-        if (config is not None):
-            if (not os.path.exists(weights_file)):
+
+        if config is not None:
+            if not os.path.exists(weights_file):
                 self.config = config
                 self.model = SATModel(self.config, self.max_caption_size, self.device)
                 self.model.encoder.train()
@@ -122,7 +151,7 @@ class Trainer(Operations):
             pbar := tqdm(self.data_loader, f"Epoch {self.epoch+1} Train Progress ", postfix=stats)
         ):
             # Forward
-            predictions,alphas=self.model.forward(images, captions, caption_lengths)
+            predictions, alphas = self.model.forward(images, captions, caption_lengths)
 
             y = self.remove_caption_padding(captions, caption_lengths, True)
             yhat = self.remove_caption_padding(predictions, caption_lengths, False)
@@ -137,7 +166,7 @@ class Trainer(Operations):
                 ref_caps = all_captions[j]
                 references.append(self.caption_numbers_to_words(ref_caps))
 
-            #_, preds = torch.max(predictions, dim=2)
+            # _, preds = torch.max(predictions, dim=2)
             preds = self.get_best_prediction(predictions)
             predicted_captions = self.caption_numbers_to_words(preds)
 
@@ -166,7 +195,7 @@ class Trainer(Operations):
             # To save in a different location, set alternate_location
             # I just don't want a file overwritten accidentally
             self.save_state(overwrite=False, alternate_location=None)
-        
+
         return {
             "top 5 acc": top5_acc_meter.get_average(),
             "loss": loss_meter.get_average(),
@@ -178,7 +207,7 @@ class Trainer(Operations):
         # Keep training stats just in case
         train_stats = []
         validate_stats = []
-        
+
         for i in range(0, epochs):
             train_stats.append(self.train_one_epoch())
             validate_stats.append(self.validate_epoch())
@@ -190,7 +219,7 @@ class Trainer(Operations):
         top5_acc_meter = AverageMeter()
         batch_time_meter = AverageMeter()
         bleu4_meter = AverageMeter()
-        
+
         self.model.encoder.eval()
         self.model.decoder.eval()
 
@@ -204,13 +233,13 @@ class Trainer(Operations):
         best_bleu = 0.0
         best_img = None
         best_caption = None
-        
+
         with torch.no_grad():
             for i, (images, captions, caption_lengths, all_captions, orig_imgs) in enumerate(
                 pbar := tqdm(self.validate_data_loader, f"Epoch {self.epoch+1} Validate Progress ", postfix=stats)
             ):
                 # Forward
-                predictions,alphas=self.model.forward(images, captions, caption_lengths)
+                predictions, alphas = self.model.forward(images, captions, caption_lengths)
 
                 # Clean captions and predictions
                 y = self.remove_caption_padding(captions, caption_lengths, True)
@@ -219,7 +248,7 @@ class Trainer(Operations):
                 # Get loss (loss only, no update)
                 loss = self.update(yhat, y, alphas, loss_only=True)
                 loss_meter.update(loss.item())
-                
+
                 # Caption/prediction numbers to words
                 references = []
                 for j in range(all_captions.shape[0]):  # iterate over batches
@@ -228,7 +257,7 @@ class Trainer(Operations):
 
                 preds = self.get_best_prediction(predictions)
                 predicted_captions = self.caption_numbers_to_words(preds, validate=True)
-                
+
                 assert len(predicted_captions) == len(references)
 
                 end_time = time.time()
@@ -251,7 +280,7 @@ class Trainer(Operations):
                         "loss": f"{loss_meter.get_average():.4f}",
                         "t-minus": time_remaining,
                     }
-            )
+                )
 
             return (
                 {
@@ -262,38 +291,48 @@ class Trainer(Operations):
                 best_img.cpu(),
                 best_caption,
                 actual_reference,
-            )    
-        
-    def update(self, yhat, y, alphas, loss_only = False):
+            )
+
+    def update(self, yhat, y, alphas, loss_only=False):
         loss = self.criterion(yhat, y)
-        loss += 1.0 * ((1.0-alphas.sum(dim=1))**2).mean()
+        loss += 1.0 * ((1.0 - alphas.sum(dim=1)) ** 2).mean()
         if loss_only == False:
             self.model.decoder_optimizer.zero_grad()
             loss.backward()
             self.model.decoder_optimizer.step()
         return loss
 
-    def save_state(self, overwrite: bool = False, alternate_location: str=None):
+    def save_state(self, overwrite: bool = False, alternate_location: str = None):
         location = self.weights_file if alternate_location is None else alternate_location
         state = {
             "encoder": self.model.encoder.state_dict(),
             "decoder": self.model.decoder.state_dict(),
             "optimizer": self.model.decoder_optimizer.state_dict(),
-            "config": self.config
+            "config": self.config,
         }
         if not overwrite and os.path.exists(self.weights_file):
             return False
         torch.save(state, location)
         return True
 
+
 # TODO
 class Evaluator(Operations):
-    def __init__(self, weights_file: str, exdir_data_location, smoke_test=False, fast_test=False, config: Configuration=None, criterion=nn.CrossEntropyLoss(), batch_size=64):
+    def __init__(
+        self,
+        weights_file: str,
+        exdir_data_location,
+        smoke_test=False,
+        fast_test=False,
+        config: Configuration = None,
+        criterion=nn.CrossEntropyLoss(),
+        batch_size=64,
+    ):
         super().__init__(weights_file, exdir_data_location, smoke_test, fast_test, config, criterion, batch_size)
         self.data = Flickr30k(exdir_data_location, mode="test", smoke_test=smoke_test, fast_test=fast_test)
         # Only process one image at a time so batch_size=1
         self.data_loader = DataLoader(self.data, num_workers=0, batch_size=1)
-        
+
         self.max_caption_size = self.data.max_cap_len
 
         self.n = len(self.data_loader)
@@ -302,9 +341,9 @@ class Evaluator(Operations):
         self.criterion = criterion
 
         self.MetricsAggregator = NLPMetricAggregator()
-        
-        if (config is not None):
-            if (not os.path.exists(weights_file)):
+
+        if config is not None:
+            if not os.path.exists(weights_file):
                 self.config = config
                 self.model = SATModel(self.config, self.max_caption_size, self.device)
                 self.model.encoder.eval()
@@ -330,7 +369,7 @@ class Evaluator(Operations):
         self.model.encoder.eval()
         self.model.decoder.eval()
         for i, (images, captions, caption_lengths, all_captions, _) in enumerate(
-        pbar := tqdm(self.data_loader, "Evaluation Progress")
+            pbar := tqdm(self.data_loader, "Evaluation Progress")
         ):
             images = images.to(self.device)
             captions = captions.to(self.device)
@@ -346,10 +385,9 @@ class Evaluator(Operations):
 
             preds = self.get_best_prediction(predictions)
             predicted_captions = self.caption_numbers_to_words(preds, validate=False)
-                
+
             assert len(predicted_captions) == len(references)
 
             self.MetricsAggregator.update(predicted=predicted_captions, reference=references)
 
         return self.MetricsAggregator.generate_metric_summaries()
-            
