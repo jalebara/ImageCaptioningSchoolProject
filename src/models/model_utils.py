@@ -8,6 +8,7 @@ from time import time
 from typing import Optional
 from .captioning_model import CaptioningModel
 
+
 class ModelComposition(CaptioningModel):
     """Wrapper class to compose model components"""
 
@@ -18,13 +19,14 @@ class ModelComposition(CaptioningModel):
     def forward(self, x):
         return self.model(x)
 
-def save_project_state(
+
+def save_model_dict(
     path: str,
     encoder: CaptioningModel,
     decoder: CaptioningModel,
     encoder_optimizer: Optional[optim.Optimizer] = None,
     decoder_optimizer: Optional[optim.Optimizer] = None,
-    epoch:Optional[int] = None
+    epoch: Optional[int] = None,
 ) -> typing.NoReturn:
     """Wrapper function for saving the project state
     Args:
@@ -46,7 +48,7 @@ def save_project_state(
     torch.save(state, path)
 
 
-def load_project_state(
+def load_model_dict(
     path: str,
     encoder: CaptioningModel,
     decoder: CaptioningModel,
