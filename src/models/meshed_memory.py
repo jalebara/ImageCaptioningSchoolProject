@@ -10,10 +10,10 @@ At the end of the project, this module should contain the following:
 - Bayesian Meshed Memory Encoder
 - Bayesian Meshed Memory Decoder
 """
-
+from typing import Optional, NoReturn
 import torch.nn as nn
 import torch
-from attention import Attention # Scaled dot product attention
+from attention import AttentionLayer  # scaled dot product attention
 
 
 class Encoder(nn.Module):
@@ -32,15 +32,26 @@ class Encoder(nn.Module):
 # C(Xbar_i, Y): (vocab_size x 1), the cross-attention operation
 # alpha_i: vocab_size x 1
 
+
 class DecoderLayer(nn.Module):
     # See comment above forward() for explanation of num_encoder_layers and encoded_size
-    def __init__(self, num_encoder_layers, encoded_size, vocab_size, num_heads):
+    def __init__(
+        self,
+        num_encoder_layers: int,
+        encoded_size: int,
+        out_size: int,
+        key_size: int,
+        num_heads: int,
+        num_mem_slots: Optional[int] = None,
+    ):
         super().__init__()
 
         # TODO: I guessed at what the arguments should be. Fix this, as idk what key_size and value_size should be
         # Scaled dot product attention
-        self.sdp_attention = Attention(out_size=vocab_size, key_size=1, value_size=num_encoder_layers, num_heads=num_heads)
-        
+        self.sdp_attention = AttentionLayer(
+            out_size=out_size, key_size=1, value_size=num_encoder_layers, num_heads=num_heads
+        )
+
         # These represent W_q, W_k, and W_v in (2) of Meshed-Memory Transformer paper
         # "proj" because the paper describes these as projections
         self.Wq_proj = nn.Linear(num_encoder_layers, encoded_size, bias=False)
@@ -49,7 +60,7 @@ class DecoderLayer(nn.Module):
 
         # This should be such that W is 2d x d, but I can't find what "d" is in the paper lol
         # TODO figure out what "d" is (I think it's vocab_size?)
-        self.fully_connected = nn.Linear(2*vocab_size, vocab_size, bias=True)
+        self.fully_connected = nn.Linear(2 * out_size, out_size, bias=True)
 
         # Sigmoid function
         self.sigmoid = nn.Sigmoid()
@@ -79,7 +90,7 @@ class DecoderLayer(nn.Module):
         Ybar = torch.tensor(torch.zeros([self.vocab_size, 1]))
         # For each Xbar_i
         for i in range(0, self.num_encoder_layers):
-            C = self.cross_attention(X[i,:], Y) # Cross attention
+            C = self.cross_attention(X[i, :], Y)  # Cross attention
             concat = torch.cat(Y, C)
             projected = self.fully_connected(concat)
             alpha[i] = self.sigmoid(projected)
@@ -87,7 +98,7 @@ class DecoderLayer(nn.Module):
 
         return Ybar
 
-    
+
 class Decoder(nn.Module):
     def __init__(self, num_layers, encoded_size, vocab_size, num_heads) -> None:
         super().__init__()
@@ -96,7 +107,6 @@ class Decoder(nn.Module):
         self.decoder_layers = []
         for i in range(0, num_layers):
             self.decoder_layers.append(DecoderLayer(num_layers, encoded_size, vocab_size, num_heads))
-        
 
     def forward(self, X, Y):
         Y_ = Y
@@ -104,7 +114,6 @@ class Decoder(nn.Module):
             Y_ = self.decoder_layers[i](X, Y_)
 
         return Y_
-            
 
 
 class MeshedMemoryTransformer(nn.Module):

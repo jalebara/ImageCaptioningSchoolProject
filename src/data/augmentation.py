@@ -99,6 +99,7 @@ class Flickr30k(VisionDataset):
     def __len__(self) -> int:
         return len(self.ids) * 5
 
+
 class Flickr30KRegionalFeatures(Flickr30k):
     def __getitem__(self, index: int) -> Tuple[Any, Any]:
         """
@@ -124,7 +125,8 @@ class Flickr30KRegionalFeatures(Flickr30k):
         lengths = torch.Tensor([lengths]).long()
 
         all_caps = torch.Tensor(self.annotations[img_id]).long()
-        return  features, target, lengths, all_caps 
+        return features, target, lengths, all_caps
+
 
 class AugmentedFlickrDataset(Flickr30k):
     def __init__(
