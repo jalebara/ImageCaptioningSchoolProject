@@ -99,6 +99,32 @@ class Flickr30k(VisionDataset):
     def __len__(self) -> int:
         return len(self.ids) * 5
 
+class Flickr30KRegionalFeatures(Flickr30k):
+    def __getitem__(self, index: int) -> Tuple[Any, Any]:
+        """
+        Args:
+            index (int): Index
+
+        Returns:
+            tuple: Tuple (features, target). target is a list of captions for the image.
+        """
+        img_id = self.ids[index // 5]
+
+        # Image
+        features = torch.Tensor(np.copy(self.archive[img_id]["region_features"][:]))
+
+        # Captions
+        target = self.annotations[img_id][index % 5]
+        target = torch.Tensor(target).long()
+        if self.target_transform is not None:
+            target = self.target_transform(target)
+
+        # Caption lengths
+        lengths = self.lengths[img_id][index % 5] + 2
+        lengths = torch.Tensor([lengths]).long()
+
+        all_caps = torch.Tensor(self.annotations[img_id]).long()
+        return  features, target, lengths, all_caps 
 
 class AugmentedFlickrDataset(Flickr30k):
     def __init__(
