@@ -191,7 +191,7 @@ class DecoderLayer(nn.Module):
         value_size: int,
         feedforward_size: int,
         num_heads: int,
-        dropout_rate:float,
+        dropout_rate: float,
     ):
         """Implements a single Decoder layer for a meshed memory transformer
 
@@ -272,7 +272,7 @@ class Decoder(nn.Module):
         encoded_size: int,
         vocab_size: int,
         num_heads: int,
-        dropout_rate:float,
+        dropout_rate: float,
     ) -> None:
         super().__init__()
         self.max_seq_len = max_sequence_len
@@ -303,33 +303,34 @@ class Decoder(nn.Module):
                     value_size=value_size,
                     feedforward_size=feedforward_size,
                     num_heads=num_heads,
-                    dropout_rate=dropout_rate
+                    dropout_rate=dropout_rate,
                 )
                 for _ in range(num_layers)
             ]
         )
 
     def generate_masks(self, y, seq_len):
-        masks = ( y != self.pad_token).unsqueeze(-1).float()
+        masks = (y != self.pad_token).unsqueeze(-1).float()
         # we need to block the left context to avoid cheating with the ground truth
         self_attention_mask = torch.triu(torch.ones((seq_len, seq_len), dtype=torch.uint8), diagonal=1)
         self_attention_mask = self_attention_mask.unsqueeze(0).unsqueeze(0)
-        self_attention_mask = self_attention_mask + ( y == self.pad_token).unsqueeze(1).unsqueeze(1).byte()
+        self_attention_mask = self_attention_mask + (y == self.pad_token).unsqueeze(1).unsqueeze(1).byte()
         self_attention_mask = self_attention_mask.gt(0)
         return masks, self_attention_mask
-    
+
     def forward(self, y, encoded, encoder_mask):
         batch_size, seq_len = y.size(0), y.size(1)
         masks, self_attention_mask = self.generate_masks(y, seq_len)
         print(f"Mask Size: {masks.size()}")
         print(f"Self Attention Size: {self_attention_mask.size()}")
-        pos = torch.arange(1, seq_len + 1).view(1,-1).expand(batch_size, -1)
+        pos = torch.arange(1, seq_len + 1).view(1, -1).expand(batch_size, -1)
         pos = pos.masked_fill(masks.squeeze(-1) == 0, 0)
         out = self.vocab_embedding(y) + self.position_embedding(pos)
         for decode in self.decoder_layers:
             out = decode(out, encoded, masks, self_attention_mask, encoder_mask)
         out = self.output(out)
         return out
+
 
 class MeshedMemoryTransformer(nn.Module):
     def __init__(self) -> None:

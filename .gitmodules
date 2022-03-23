@@ -1,5 +1,5 @@
 [submodule "src/data/bottom-up-attention"]
-	path = src/data/bottom-up-attention
+	path = src/lib/bottom-up-attention
 	url = https://github.com/peteanderson80/bottom-up-attention.git
 [submodule "src/lib/detectron2"]
 	path = src/lib/detectron2
