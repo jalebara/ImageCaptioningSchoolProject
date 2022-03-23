@@ -90,7 +90,7 @@ class Attention(nn.Module):
         self.querygen.bias.data.fill_(0)
         self.valuegen.bias.data.fill_(0)
 
-    def preprocess_inputs(self, queries: torch.Tensor, keys: torch.Tensor, values: torch.Tensor) -> tuple:
+    def preprocess_inputs(self, keys: torch.Tensor, queries: torch.Tensor, values: torch.Tensor) -> tuple:
         """_summary_
 
         Args:
@@ -119,7 +119,7 @@ class Attention(nn.Module):
         keys = keys.permute(0, 2, 3, 1)
 
         values = values.view(batch_size, num_keys, self.num_heads, self.value_size)
-        values = values.permute(0, 2, 3, 1)
+        values = values.permute(0, 2, 1, 3)
 
         return queries, keys, values
 
@@ -166,11 +166,11 @@ class Attention(nn.Module):
         """
         num_queries = queries.size(1)
         batch_size = keys.size(0)
-        queries, keys, values = self.preprocess_inputs(queries, keys, values)
-        attention = torch.matmul(queries, torch.transpose(keys)) / self.scale
+        queries, keys, values = self.preprocess_inputs(queries=queries, keys=keys, values=values)
+        attention = torch.matmul(queries, keys) / self.scale
 
         # Pass in information from previous layers
-        attention = self.process_masks_and_weights(attention_mask, attention_weights)
+        attention = self.process_masks_and_weights(attention, attention_mask, attention_weights)
 
         # complete attention computation
         attention = torch.softmax(attention, dim=-1)
@@ -297,9 +297,6 @@ class AttentionLayer(nn.Module):
             num_heads (int): number of attention heads
             dropout (float, optional): dropout rate. Defaults to 0.5.
             num_memory_slots (Optional[int], optional): number of memory slots to use. Defaults to None.
-
-        Returns:
-            NoReturn: _description_
         """
         super().__init__()
         if num_memory_slots is not None:

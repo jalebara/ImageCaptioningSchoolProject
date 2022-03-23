@@ -114,3 +114,7 @@ def topk_accuracy(yhat: torch.Tensor, y: torch.Tensor, k: int):
     correct = idx.eq(y.view(-1, 1).expand_as(idx))
     correct = correct.view(-1).float().sum()
     return correct.item() / batch_size * 100.0
+
+
+def count_trainable_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
