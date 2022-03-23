@@ -12,3 +12,4 @@ tensorboard
 exdir
 rouge
 scikit-image
+pytorch-lightning
