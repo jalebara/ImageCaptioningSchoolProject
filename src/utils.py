@@ -15,20 +15,29 @@ from functools import wraps
 class NLPMetricAggregator(object):
     """Class for aggregating caption hypotheses and generating NLP metrics"""
 
-    def __init__(self) -> None:
-        self._predicted_captions = []
-        self._reference_captions = []
+    def __init__(self, inv_word_map:dict) -> None:
+        self.inv_word_map = inv_word_map
         self.bleu1 = BLEUScore(1)
         self.bleu2 = BLEUScore(2)
         self.bleu3 = BLEUScore(3)
         self.bleu4 = BLEUScore(4)
         self.rouge = ROUGEScore()
-
+        self.reset()
+    
+    def convert_tokens_to_string(self, caption:list) -> str:
+        return " ".join( [self.inv_word_map[tok] for tok in caption] ).strip()
+    
     def update(self, predicted: list, reference: list):
         """Store predictions and references"""
+        predicted = self.convert_tokens_to_string(predicted)
+        reference = [self.convert_tokens_to_string(ref) for ref in reference]
         self._predicted_captions.extend(predicted)
         self._reference_captions.extend(reference)
-
+    
+    def reset(self):
+        self._predicted_captions = []
+        self._reference_captions = []
+        
     def generate_metric_summaries(self):
         """Retrieves NLP metrics
         Returns:
@@ -56,6 +65,8 @@ class AverageMeter(object):
         self._count = 0
 
     def get_average(self) -> float:
+        if self._count == 0:
+            return 0
         return self._sum / self._count
 
     def update(self, x: float) -> typing.NoReturn:
@@ -64,7 +75,6 @@ class AverageMeter(object):
 
     def __str__(self) -> str:
         return f"{self._name}: {self.get_average():.4f}"
-
 
 class EarlyStopping(object):
     def __init__(
@@ -114,3 +124,10 @@ def topk_accuracy(yhat: torch.Tensor, y: torch.Tensor, k: int):
     correct = idx.eq(y.view(-1, 1).expand_as(idx))
     correct = correct.view(-1).float().sum()
     return correct.item() / batch_size * 100.0
+
+
+def count_trainable_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+def send_text_message(message):
+    raise NotImplementedError

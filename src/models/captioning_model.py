@@ -1,10 +1,11 @@
 import torch
 import torch.nn as nn
+import pytorch_lightning as pl
 
 import typing
 
 
-class CaptioningModel(nn.Module):
+class CaptioningModel(pl.LightningModule):
     def __init__(self) -> typing.NoReturn:
         super().__init__()
 

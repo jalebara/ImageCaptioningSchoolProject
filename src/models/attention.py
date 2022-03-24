@@ -46,11 +46,13 @@ class SATAttention(nn.Module):
         # Return values
         return (zhat, alpha)
 
+
 ############################################
 ##
 ## Meshed Memory Transformer
 ##
 ############################################
+
 
 class Attention(nn.Module):
     """Implements Scaled Dot Product Attention"""
@@ -88,7 +90,7 @@ class Attention(nn.Module):
         self.querygen.bias.data.fill_(0)
         self.valuegen.bias.data.fill_(0)
 
-    def preprocess_inputs(self, queries: torch.Tensor, keys: torch.Tensor, values: torch.Tensor) -> tuple:
+    def preprocess_inputs(self, keys: torch.Tensor, queries: torch.Tensor, values: torch.Tensor) -> tuple:
         """_summary_
 
         Args:
@@ -117,13 +119,14 @@ class Attention(nn.Module):
         keys = keys.permute(0, 2, 3, 1)
 
         values = values.view(batch_size, num_keys, self.num_heads, self.value_size)
-        values = values.permute(0, 2, 3, 1)
+        values = values.permute(0, 2, 1, 3)
 
         return queries, keys, values
 
     def process_masks_and_weights(
         self,
         attention: torch.Tensor,
+        num_keys:int,
         attention_mask: Optional[torch.Tensor] = None,
         attention_weights: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
@@ -131,7 +134,7 @@ class Attention(nn.Module):
 
         Args:
             attention_mask (Optional[torch.Tensor]) : binary mask to block contributions from some attention locations
-            attention_weights(Optional[torch.Tensor]) : weights to attentuate regions of attention
+            attention_weights (Optional[torch.Tensor]) : weights to attentuate regions of attention
         Returns:
             (torch.Tensor) :
         """
@@ -163,12 +166,13 @@ class Attention(nn.Module):
             torch.Tensor: _description_
         """
         num_queries = queries.size(1)
+        num_keys = keys.size(1)
         batch_size = keys.size(0)
-        queries, keys, values = self.preprocess_inputs(queries, keys, values)
-        attention = torch.matmul(queries, torch.transpose(keys)) / self.scale
+        queries, keys, values = self.preprocess_inputs(queries=queries, keys=keys, values=values)
+        attention = torch.matmul(queries, keys) / self.scale
 
         # Pass in information from previous layers
-        attention = self.process_masks_and_weights(attention_mask, attention_weights)
+        attention = self.process_masks_and_weights(attention, num_keys, attention_mask, attention_weights)
 
         # complete attention computation
         attention = torch.softmax(attention, dim=-1)
@@ -181,22 +185,19 @@ class Attention(nn.Module):
 
 
 class AttentionWithMemory(Attention):
-    def __init__(self, vocab_size: int, key_size: int, value_size: int, num_heads: int, num_mem_slots: int) -> NoReturn:
+    def __init__(self, out_size: int, key_size: int, value_size: int, num_heads: int, num_mem_slots: int) -> NoReturn:
         """_summary_
 
         Args:
-            vocab_size (int): _description_
-            key_size (int): _description_
-            value_size (int): _description_
-            num_heads (int): _description_
-            num_mem_slots (int): _description_
-
-        Returns:
-            NoReturn: _description_
+            out_size (int): output size of model
+            key_size (int): size of key matrices
+            value_size (int): size of value matrices
+            num_heads (int): number of heads
+            num_mem_slots (int): number of memory slots
         """
-        super().__init__(vocab_size, key_size, value_size, num_heads)
+        super().__init__(out_size, key_size, value_size, num_heads)
         self.mem_keys = nn.Parameter(torch.FloatTensor(1, num_mem_slots, num_heads * key_size))
-        self.mem_values = nn.Parameter(torch.FloatStorage(1, num_mem_slots, num_heads * value_size))
+        self.mem_values = nn.Parameter(torch.FloatTensor(1, num_mem_slots, num_heads * value_size))
         self.num_mem_slots = num_mem_slots
 
         # initialize parameter weights
@@ -219,8 +220,12 @@ class AttentionWithMemory(Attention):
         batch_size = keys.size(0)
 
         # Reshape memory
-        mem_key = np.sqrt(self.key_size) * self.mem_keys.expand(batch_size, self.num_mem_slots, self.num_heads * self.key_size)
-        mem_val = np.sqrt(self.num_mem_slots) * self.mem_values.expand(batch_size, self.num_mem_slots, self.num_heads * self.value_size)
+        mem_key = np.sqrt(self.key_size) * self.mem_keys.expand(
+            batch_size, self.num_mem_slots, self.num_heads * self.key_size
+        )
+        mem_val = np.sqrt(self.num_mem_slots) * self.mem_values.expand(
+            batch_size, self.num_mem_slots, self.num_heads * self.value_size
+        )
 
         # Flattened keys queries, and values
         queries = self.querygen(queries)
@@ -240,17 +245,18 @@ class AttentionWithMemory(Attention):
         keys = keys.permute(0, 2, 3, 1)
 
         values = values.view(batch_size, num_keys + self.num_mem_slots, self.num_heads, self.value_size)
-        values = values.permute(0, 2, 3, 1)
+        values = values.permute(0, 2, 1, 3)
 
         return queries, keys, values
 
     def process_masks_and_weights(
         self,
         attention: torch.Tensor,
+        num_keys:int,
         attention_mask: Optional[torch.Tensor] = None,
         attention_weights: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        """_summary_
+        """Apply masks to current layer
 
         Args:
             attention (torch.Tensor): _description_
@@ -263,20 +269,28 @@ class AttentionWithMemory(Attention):
         if attention_weights is not None:
             # element wise product with binary array
             attention = torch.cat(
-                [attention[:, :, :, : self.key_size] * attention_mask, attention[:, :, :, self.key_size:]], -1
+                [attention[:, :, :, : self.key_size] * attention_weights, attention[:, :, :, self.key_size :]], -1
             )
         if attention_mask is not None:
-            attention[:, :, :, : self.key_size] = attention[:, :, :, self.key_size:].masked_fill(
+            attention[:, :, :, :num_keys] = attention[:, :, :, :num_keys].masked_fill(
                 attention_mask, -np.inf
             )
         return attention
 
 
 class AttentionLayer(nn.Module):
-    def __init__(self, out_size:int, key_size:int, value_size:int, num_heads:int, dropout:float=0.5, num_memory_slots:Optional[int]=None) -> NoReturn:
+    def __init__(
+        self,
+        out_size: int,
+        key_size: int,
+        value_size: int,
+        num_heads: int,
+        dropout: float = 0.5,
+        num_memory_slots: Optional[int] = None,
+    ) -> NoReturn:
         """Wrapper around the attention module to add the other components in the paper
 
-        The Meshed Memory paper includes residual connections between each attention module. This class implements that and also 
+        The Meshed Memory paper includes residual connections between each attention module. This class implements that and also
         incorporates dropout regularization which will absolutely be needed given the data size.
 
         Args:
@@ -286,9 +300,6 @@ class AttentionLayer(nn.Module):
             num_heads (int): number of attention heads
             dropout (float, optional): dropout rate. Defaults to 0.5.
             num_memory_slots (Optional[int], optional): number of memory slots to use. Defaults to None.
-
-        Returns:
-            NoReturn: _description_
         """
         super().__init__()
         if num_memory_slots is not None:
@@ -297,8 +308,15 @@ class AttentionLayer(nn.Module):
             self.attention = Attention(out_size, key_size, value_size, num_heads)
         self.dropout = nn.Dropout(dropout)
         self.norm = nn.LayerNorm(out_size)
-    
-    def forward(self, queries:torch.Tensor, keys:torch.Tensor, values:torch.Tensor, attention_mask:Optional[torch.Tensor]=None, attention_weights:Optional[torch.Tensor]=None) -> torch.Tensor:
+
+    def forward(
+        self,
+        queries: torch.Tensor,
+        keys: torch.Tensor,
+        values: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        attention_weights: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         """_summary_
 
         Args:
@@ -316,6 +334,7 @@ class AttentionLayer(nn.Module):
         output = self.norm(output + queries)
         return output
 
+
 class BayesianAttention(Attention):
     def __init__(self) -> None:
         super().__init__()
@@ -326,4 +345,3 @@ class BayesianMultiHeadedAttention(nn.Module):
     def __init__(self) -> None:
         super().__init__()
         raise NotImplementedError
-

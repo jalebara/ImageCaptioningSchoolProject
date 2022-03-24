@@ -11,3 +11,6 @@ flickr30k/
 __pycache__/
 *.pt
 runs*/
+.pytest_cache/
+.vscode/
+lightning_logs/

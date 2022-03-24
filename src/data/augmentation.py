@@ -12,15 +12,20 @@ import torch
 from torchvision.datasets import VisionDataset
 import torchvision.transforms as transforms
 from torch import float32
-from typing import Any, Callable, Optional, Tuple
+from typing import Any, Callable, NoReturn, Optional, Tuple
 from multiprocessing import Pool
-import PIL
+from copy import copy
 
 
 def load_metadata(path, key, mode):
     archive = exdir.File(path, mode="r")
     archive = archive.require_group(mode)
-    return {key: archive[key].attrs["captions"]}, {key: archive[key].attrs["lengths"]}
+    try:
+        ret = {key: archive[key].attrs["captions"]}, {key: archive[key].attrs["lengths"]}
+    except Exception as e:
+        print(key)
+        raise
+    return ret
 
 
 class Flickr30k(VisionDataset):
@@ -43,14 +48,18 @@ class Flickr30k(VisionDataset):
     ) -> None:
         super(Flickr30k, self).__init__(root, transform=transform, target_transform=target_transform)
         archive = exdir.File(root, mode="r")
+        self.valid_ids = archive.attrs["valid_ids"]
         self.archive = archive.require_group(mode)
+        
+
         data_keys = list(self.archive.keys())
         if smoke_test:
             data_keys = data_keys[:10]
         elif fast_test:
-            data_keys = data_keys[: int(len(data_keys) * 0.3)]
+            data_keys = data_keys[: int(len(data_keys) * 0.1)]
         # Read tokenized captions and store in dict
         self.annotations = defaultdict(list)
+        self.ann_list = []
         self.lengths = defaultdict(list)
         self.normalize = transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 
@@ -58,8 +67,14 @@ class Flickr30k(VisionDataset):
             zx = list(zip([root for _ in range(len(data_keys))], data_keys, [mode for _ in range(len(data_keys))]))
             jobs = [pool.apply_async(func=load_metadata, args=(*argument,)) for argument in zx]
             for job in tqdm(jobs, desc=f"Loading {mode} data"):
+                job.wait()
                 a, l = job.get()
                 self.annotations.update(a)
+                for id, caps in a.items():
+                    if id not in self.valid_ids:
+                        continue
+                    for cap in caps:
+                        self.ann_list.append( (id, cap) )
                 self.lengths.update(l)
         self.ids = list(sorted(self.annotations.keys()))
         self.word_map = archive.attrs["word_map"].to_dict()
@@ -91,7 +106,7 @@ class Flickr30k(VisionDataset):
 
         # Caption lengths
         lengths = self.lengths[img_id][index % 5]
-        lengths = torch.Tensor([lengths]).long()
+        lengths = torch.from_numpy([lengths]).long()
 
         all_caps = torch.Tensor(self.annotations[img_id]).long()
         return mod, target, lengths, all_caps, img
@@ -99,6 +114,41 @@ class Flickr30k(VisionDataset):
     def __len__(self) -> int:
         return len(self.ids) * 5
 
+
+class Flickr30KRegionalFeatures(Flickr30k):
+    def __init__(self, max_detections, *args, **kwargs) -> NoReturn:
+        self.max_detect = max_detections
+        super().__init__( *args, **kwargs)
+    def __getitem__(self, index: int) -> Tuple[Any, Any]:
+        """
+        Args:
+            index (int): Index
+
+        Returns:
+            tuple: Tuple (features, target). target is a list of captions for the image.
+        """
+        img_id, target = self.ann_list[index]
+
+        # Image
+        features = np.copy(self.archive[img_id]["region_features"][:])
+        if features.shape[0] > self.max_detect:
+            features = features[:self.max_detect, :]
+        elif features.shape[0] < self.max_detect:
+            diff = self.max_detect - features.shape[0]
+            features = np.concatenate([features, np.zeros( (diff, features.shape[1]) )])
+
+        features = torch.tensor(features).float()
+        # Captions
+        target = torch.tensor(target).long()
+        if self.target_transform is not None:
+            target = self.target_transform(target)
+
+        #all_caps = torch.tensor(np.copy()).long()
+    
+        return features, target #, [self.annotations[img_id]]
+    
+    def __len__(self) -> int:
+        return len(self.ann_list)
 
 class AugmentedFlickrDataset(Flickr30k):
     def __init__(
