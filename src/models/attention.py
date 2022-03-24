@@ -126,6 +126,7 @@ class Attention(nn.Module):
     def process_masks_and_weights(
         self,
         attention: torch.Tensor,
+        num_keys:int,
         attention_mask: Optional[torch.Tensor] = None,
         attention_weights: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
@@ -165,12 +166,13 @@ class Attention(nn.Module):
             torch.Tensor: _description_
         """
         num_queries = queries.size(1)
+        num_keys = keys.size(1)
         batch_size = keys.size(0)
         queries, keys, values = self.preprocess_inputs(queries=queries, keys=keys, values=values)
         attention = torch.matmul(queries, keys) / self.scale
 
         # Pass in information from previous layers
-        attention = self.process_masks_and_weights(attention, attention_mask, attention_weights)
+        attention = self.process_masks_and_weights(attention, num_keys, attention_mask, attention_weights)
 
         # complete attention computation
         attention = torch.softmax(attention, dim=-1)
@@ -195,7 +197,7 @@ class AttentionWithMemory(Attention):
         """
         super().__init__(out_size, key_size, value_size, num_heads)
         self.mem_keys = nn.Parameter(torch.FloatTensor(1, num_mem_slots, num_heads * key_size))
-        self.mem_values = nn.Parameter(torch.FloatStorage(1, num_mem_slots, num_heads * value_size))
+        self.mem_values = nn.Parameter(torch.FloatTensor(1, num_mem_slots, num_heads * value_size))
         self.num_mem_slots = num_mem_slots
 
         # initialize parameter weights
@@ -243,13 +245,14 @@ class AttentionWithMemory(Attention):
         keys = keys.permute(0, 2, 3, 1)
 
         values = values.view(batch_size, num_keys + self.num_mem_slots, self.num_heads, self.value_size)
-        values = values.permute(0, 2, 3, 1)
+        values = values.permute(0, 2, 1, 3)
 
         return queries, keys, values
 
     def process_masks_and_weights(
         self,
         attention: torch.Tensor,
+        num_keys:int,
         attention_mask: Optional[torch.Tensor] = None,
         attention_weights: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
@@ -266,10 +269,10 @@ class AttentionWithMemory(Attention):
         if attention_weights is not None:
             # element wise product with binary array
             attention = torch.cat(
-                [attention[:, :, :, : self.key_size] * attention_mask, attention[:, :, :, self.key_size :]], -1
+                [attention[:, :, :, : self.key_size] * attention_weights, attention[:, :, :, self.key_size :]], -1
             )
         if attention_mask is not None:
-            attention[:, :, :, : self.key_size] = attention[:, :, :, self.key_size :].masked_fill(
+            attention[:, :, :, :num_keys] = attention[:, :, :, :num_keys].masked_fill(
                 attention_mask, -np.inf
             )
         return attention

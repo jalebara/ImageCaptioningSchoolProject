@@ -12,11 +12,15 @@ At the end of the project, this module should contain the following:
 """
 from base64 import encode
 import numpy as np
-from typing import Optional, NoReturn
+from typing import Optional, NoReturn, OrderedDict
 import torch.nn as nn
+import torch.optim as optim
 import torch
-from .attention import AttentionLayer  # scaled dot product attention
 
+from utils import AverageMeter
+from .attention import AttentionLayer  # scaled dot product attention
+from .Configuration import Configuration
+import pytorch_lightning as pl
 
 class PWFeedForward(nn.Module):
     def __init__(self, att_size: int, feedforward_size: int, dropout_rate: float) -> NoReturn:
@@ -314,30 +318,111 @@ class Decoder(nn.Module):
         # we need to block the left context to avoid cheating with the ground truth
         self_attention_mask = torch.triu(torch.ones((seq_len, seq_len), dtype=torch.uint8), diagonal=1)
         self_attention_mask = self_attention_mask.unsqueeze(0).unsqueeze(0)
-        self_attention_mask = self_attention_mask + (y == self.pad_token).unsqueeze(1).unsqueeze(1).byte()
+        self_attention_mask = self_attention_mask.to("cuda:0")
+        self_attention_mask = self_attention_mask + (y == self.pad_token).unsqueeze(1).unsqueeze(1).byte().to("cuda:0")
         self_attention_mask = self_attention_mask.gt(0)
         return masks, self_attention_mask
 
     def forward(self, y, encoded, encoder_mask):
         batch_size, seq_len = y.size(0), y.size(1)
         masks, self_attention_mask = self.generate_masks(y, seq_len)
-        print(f"Mask Size: {masks.size()}")
-        print(f"Self Attention Size: {self_attention_mask.size()}")
-        pos = torch.arange(1, seq_len + 1).view(1, -1).expand(batch_size, -1)
+        pos = torch.arange(1, seq_len + 1).view(1, -1).expand(batch_size, -1).to("cuda:0")
         pos = pos.masked_fill(masks.squeeze(-1) == 0, 0)
-        out = self.vocab_embedding(y) + self.position_embedding(pos)
+        vocab_embedding = self.vocab_embedding(y)
+        pos_embedding = self.position_embedding(pos)
+        out =  vocab_embedding + pos_embedding
         for decode in self.decoder_layers:
             out = decode(out, encoded, masks, self_attention_mask, encoder_mask)
         out = self.output(out)
         return out
 
 
-class MeshedMemoryTransformer(nn.Module):
-    def __init__(self) -> None:
+class MeshedMemoryTransformer(pl.LightningModule):
+    def __init__(self, config:Configuration, metric_tracker) -> NoReturn:
         super().__init__()
-        raise NotImplementedError
+        # Training Params
+        self.lr = config["learning_rate"]
+        
+        self.loss_func = config["loss_function"]
+        self.end_token = config["end_token"]
+        self.start_token = config["start_token"]
+        self.pad_token = config["pad_token"]
+        self.vocab_size = config["vocabulary_size"]
+        self.metric_tracker = metric_tracker
+        self.metric_tracker.reset()
+        # Construct Encoder
+        self.encoder = MeshedMemoryEncoder(
+            in_size=config["data_size"],
+            num_layers=config["num_encoder_layers"],
+            out_size=config["out_size"],
+            key_size=config["key_size"],
+            value_size=config["value_size"],
+            num_heads=config["num_heads"],
+            dropout_rate=config["dropout_rate"],
+            feedforward_size=config["feedforward_size"],
+            num_mem_slots=config["num_memory_slots"]
+        )
+        
+        #Construct Decoder
+        self.decoder = Decoder(
+            num_encoder_layers=config["num_encoder_layers"],
+            num_layers=config["num_decoder_layers"],
+            max_sequence_len=config["max_sequence_length"],
+            pad_token=config["pad_token"],
+            out_size=config["out_size"],
+            key_size=config["key_size"],
+            value_size=config["value_size"],
+            feedforward_size=config["feedforward_size"],
+            encoded_size=config["out_size"],
+            vocab_size=config["vocabulary_size"],
+            num_heads=config["num_heads"],
+            dropout_rate=config["dropout_rate"],
+        )
+        
+    def forward(self, data, captions):
+        encoded, masks = self.encoder(data)
+        out = self.decoder(captions, encoded, masks)
+        return out
 
-
+    def configure_optimizers(self):
+        return optim.Adam(self.parameters(), lr=self.lr)
+    
+    def training_step(self, batch, batch_idx):
+        inputs, captions = batch
+        out = self(inputs, captions)
+        # remove start token for backpropagation
+        y = captions[:, 1:].contiguous()
+        y = y.view(-1)
+        out = out[:, :-1].contiguous()
+        out = out.view(-1, self.vocab_size)
+        loss = self.loss_func(out, y, ignore_index=self.pad_token)
+        tqdm_dict = {"train_loss": loss.detach()}
+        output = OrderedDict({"loss": loss, "progress_bar":tqdm_dict, "log":tqdm_dict})
+        return output
+    
+    def validation_step(self, batch, batch_idx):
+        inputs, caption = batch
+        out = self(inputs, caption)
+        
+        # remove start token for backpropagation
+        y = caption[:, 1:].contiguous()
+        y = y.view(-1)
+        out = out[:, :-1].contiguous()
+        out = out.view(-1, self.vocab_size)
+        loss = self.loss_func(out, y, ignore_index=self.pad_token)
+        tqdm_dict = {"val_loss": loss.detach()}
+        self.log("val_loss", loss.detach(), prog_bar=True, on_epoch=True, logger=True)
+        # For validation, we keep it simple and use the greedy approach
+        out = torch.argmax(out, dim=-1).cpu().tolist()
+        y = y.cpu().tolist()
+        self.metric_tracker.update(out, [y])
+        
+        output = OrderedDict({"val_loss": loss, "progress_bar":tqdm_dict, "log":tqdm_dict})
+        return output
+    
+    def on_epoch_end(self) -> None:
+        pass
+    
 class BayesianEncoder(nn.Module):
     def __init__(self) -> None:
         super().__init__()
