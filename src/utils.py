@@ -10,11 +10,15 @@ from torchmetrics.text.rouge import ROUGEScore
 from nltk.translate.meteor_score import meteor_score
 from nltk.tokenize import word_tokenize
 from functools import wraps
+from pytorch_lightning.callbacks import Callback
+import pytorch_lightning as pl
+from pytorch_lightning.utilities.types import STEP_OUTPUT
+from typing import Any, Optional, NoReturn
+
 
 
 class NLPMetricAggregator(object):
     """Class for aggregating caption hypotheses and generating NLP metrics"""
-
     def __init__(self, inv_word_map:dict) -> None:
         self.inv_word_map = inv_word_map
         self.bleu1 = BLEUScore(1)
@@ -22,17 +26,20 @@ class NLPMetricAggregator(object):
         self.bleu3 = BLEUScore(3)
         self.bleu4 = BLEUScore(4)
         self.rouge = ROUGEScore()
+        self.meteor_meter = AverageMeter()
         self.reset()
     
     def convert_tokens_to_string(self, caption:list) -> str:
-        return " ".join( [self.inv_word_map[tok] for tok in caption] ).strip()
+        return " ".join( [self.inv_word_map[tok] for tok in caption if self.inv_word_map[tok] not in ["<pad>", "<start>"] ]).strip()
     
     def update(self, predicted: list, reference: list):
         """Store predictions and references"""
         predicted = self.convert_tokens_to_string(predicted)
         reference = [self.convert_tokens_to_string(ref) for ref in reference]
-        self._predicted_captions.extend(predicted)
-        self._reference_captions.extend(reference)
+        # Update Meteor Meter
+        self.meteor_meter.update(meteor_score([word_tokenize(r) for r in reference], word_tokenize(predicted)))
+        self._predicted_captions.append(predicted)
+        self._reference_captions.append(reference)
     
     def reset(self):
         self._predicted_captions = []
@@ -43,16 +50,13 @@ class NLPMetricAggregator(object):
         Returns:
             (dict): A dictionary of NLP metrics generated from stored hypotheses and references
         """
-        meteor_meter = AverageMeter("Meteor Mean")
-        for pred, refs in zip(self._predicted_captions, self._reference_captions):
-            meteor_meter.update(meteor_score([word_tokenize(r) for r in refs], word_tokenize(pred)))
         return {
             "bleu1": self.bleu1(self._predicted_captions, self._reference_captions),
             "bleu2": self.bleu2(self._predicted_captions, self._reference_captions),
             "bleu3": self.bleu3(self._predicted_captions, self._reference_captions),
             "bleu4": self.bleu4(self._predicted_captions, self._reference_captions),
             "rouge_fmeasure": self.rouge(self._predicted_captions, self._reference_captions)["rouge1_fmeasure"],
-            "meteor": np.round(meteor_meter.get_average(), 4),
+            "meteor": np.round(self.meteor_meter.get_average(), 4),
         }
 
 
@@ -110,6 +114,27 @@ class EarlyStopping(object):
             torch.save(state, self.checkpoint)
             self.counter = 0
 
+class Flickr30KMetricsCallback(Callback):
+    def __init__(self, inv_word_map:dict, caption_reference:dict, sequence_len:int = 30):
+        self.tracker = NLPMetricAggregator(inv_word_map)
+        self.tracker.reset()
+        self.caption_refs = caption_reference
+        self.seq_len = sequence_len
+    
+    def on_validation_batch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule, outputs: Optional[STEP_OUTPUT], batch: Any, batch_idx: int, dataloader_idx: int) -> None:
+        _, _, img_ids = batch
+        batch_predictions = outputs["val_batch_preds"]
+        pred_caps = torch.argmax(batch_predictions, dim=-1) # get token predictions
+        pred_caps = pred_caps.unsqueeze(0).view(-1, self.seq_len - 1)
+        for pred, id in zip(pred_caps.tolist(), img_ids):
+            ref_caps = self.caption_refs[id]
+            self.tracker.update(pred, ref_caps)
+
+    def on_validation_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
+        metrics = self.tracker.generate_metric_summaries()
+        self.tracker.reset()
+        for metric, value in metrics.items():
+            pl_module.log(metric, value)
 
 def calc_time(t: float) -> str:
     hours = int(t) // 3600

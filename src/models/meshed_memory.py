@@ -338,7 +338,7 @@ class Decoder(nn.Module):
 
 
 class MeshedMemoryTransformer(pl.LightningModule):
-    def __init__(self, config:Configuration, metric_tracker) -> NoReturn:
+    def __init__(self, config:Configuration) -> NoReturn:
         super().__init__()
         # Training Params
         self.lr = config["learning_rate"]
@@ -348,8 +348,6 @@ class MeshedMemoryTransformer(pl.LightningModule):
         self.start_token = config["start_token"]
         self.pad_token = config["pad_token"]
         self.vocab_size = config["vocabulary_size"]
-        self.metric_tracker = metric_tracker
-        self.metric_tracker.reset()
         # Construct Encoder
         self.encoder = MeshedMemoryEncoder(
             in_size=config["data_size"],
@@ -388,7 +386,7 @@ class MeshedMemoryTransformer(pl.LightningModule):
         return optim.Adam(self.parameters(), lr=self.lr)
     
     def training_step(self, batch, batch_idx):
-        inputs, captions = batch
+        inputs, captions, _ = batch
         out = self(inputs, captions)
         # remove start token for backpropagation
         y = captions[:, 1:].contiguous()
@@ -402,7 +400,7 @@ class MeshedMemoryTransformer(pl.LightningModule):
         return output
     
     def validation_step(self, batch, batch_idx):
-        inputs, caption = batch
+        inputs, caption, _ = batch
         out = self(inputs, caption)
         
         # remove start token for backpropagation
@@ -413,12 +411,7 @@ class MeshedMemoryTransformer(pl.LightningModule):
         loss = self.loss_func(out, y, ignore_index=self.pad_token)
         tqdm_dict = {"val_loss": loss.detach()}
         self.log("val_loss", loss.detach(), prog_bar=True, on_epoch=True, logger=True)
-        # For validation, we keep it simple and use the greedy approach
-        out = torch.argmax(out, dim=-1).cpu().tolist()
-        y = y.cpu().tolist()
-        self.metric_tracker.update(out, [y])
-        
-        output = OrderedDict({"val_loss": loss, "progress_bar":tqdm_dict, "log":tqdm_dict})
+        output = OrderedDict({"val_loss": loss, "progress_bar":tqdm_dict, "log":tqdm_dict, "val_batch_preds":out})
         return output
     
     def on_epoch_end(self) -> None:

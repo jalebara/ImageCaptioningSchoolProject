@@ -20,7 +20,7 @@ from models.Configuration import *
 from models.meshed_memory import MeshedMemoryTransformer
 from models.model_utils import count_parameters
 
-from utils import NLPMetricAggregator
+from utils import Flickr30KMetricsCallback
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser("Project 2 Training")
@@ -33,7 +33,7 @@ def main():
     smoke_test = args.smoke_test
     
     # Load Config
-    config = BigTransformerConfiguration()
+    config = MediumTransformerConfiguration()
     
     # Load Data
     train = Flickr30KRegionalFeatures( root=data_dir, max_detections=config["max_detections"], smoke_test=smoke_test, mode="train")
@@ -43,13 +43,15 @@ def main():
     valloader = DataLoader(valid, batch_size=config["batch_size"], num_workers=10)
     
     # Load Model
-    lightning_model = MeshedMemoryTransformer(config, NLPMetricAggregator(train.inv_word_map))
+    lightning_model = MeshedMemoryTransformer(config)
     trainable, total = count_parameters(lightning_model)
     
     # Model Checkpointing
     checkpoint_callback = pl.callbacks.ModelCheckpoint(monitor="val_loss", filename='{epoch}-{val_loss:.2f}', mode="min")
+    # Language Metric Aggregation
+    metric_callback = Flickr30KMetricsCallback(valid.inv_word_map, valid.annotations)
     # Cross Entropy Training
-    trainer = pl.Trainer(max_epochs=config["epochs"], accelerator="auto", fast_dev_run=smoke_test, gpus=1, callbacks=[checkpoint_callback])
+    trainer = pl.Trainer(max_epochs=config["epochs"], accelerator="auto", fast_dev_run=smoke_test, gpus=1, callbacks=[checkpoint_callback, metric_callback])
     trainer.fit(lightning_model, trainloader, valloader)
                                                     
 
