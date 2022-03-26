@@ -33,7 +33,7 @@ def main():
     smoke_test = args.smoke_test
     
     # Load Config
-    config = MediumTransformerConfiguration()
+    config = MediumDroppyTransformerConfiguration()
     
     # Load Data
     train = Flickr30KRegionalFeatures( root=data_dir, max_detections=config["max_detections"], smoke_test=smoke_test, mode="train")

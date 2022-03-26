@@ -6,6 +6,7 @@ from tqdm import tqdm
 from time import time
 import numpy as np
 from torchmetrics import BLEUScore
+from torchmetrics.functional import bleu_score, rouge_score
 from torchmetrics.text.rouge import ROUGEScore
 from nltk.translate.meteor_score import meteor_score
 from nltk.tokenize import word_tokenize
@@ -14,51 +15,12 @@ from pytorch_lightning.callbacks import Callback
 import pytorch_lightning as pl
 from pytorch_lightning.utilities.types import STEP_OUTPUT
 from typing import Any, Optional, NoReturn
+from multiprocessing import Pool, cpu_count
 
-
-
-class NLPMetricAggregator(object):
-    """Class for aggregating caption hypotheses and generating NLP metrics"""
-    def __init__(self, inv_word_map:dict) -> None:
-        self.inv_word_map = inv_word_map
-        self.bleu1 = BLEUScore(1)
-        self.bleu2 = BLEUScore(2)
-        self.bleu3 = BLEUScore(3)
-        self.bleu4 = BLEUScore(4)
-        self.rouge = ROUGEScore()
-        self.meteor_meter = AverageMeter()
-        self.reset()
-    
-    def convert_tokens_to_string(self, caption:list) -> str:
-        return " ".join( [self.inv_word_map[tok] for tok in caption if self.inv_word_map[tok] not in ["<pad>", "<start>"] ]).strip()
-    
-    def update(self, predicted: list, reference: list):
-        """Store predictions and references"""
-        predicted = self.convert_tokens_to_string(predicted)
-        reference = [self.convert_tokens_to_string(ref) for ref in reference]
-        # Update Meteor Meter
-        self.meteor_meter.update(meteor_score([word_tokenize(r) for r in reference], word_tokenize(predicted)))
-        self._predicted_captions.append(predicted)
-        self._reference_captions.append(reference)
-    
-    def reset(self):
-        self._predicted_captions = []
-        self._reference_captions = []
-        
-    def generate_metric_summaries(self):
-        """Retrieves NLP metrics
-        Returns:
-            (dict): A dictionary of NLP metrics generated from stored hypotheses and references
-        """
-        return {
-            "bleu1": self.bleu1(self._predicted_captions, self._reference_captions),
-            "bleu2": self.bleu2(self._predicted_captions, self._reference_captions),
-            "bleu3": self.bleu3(self._predicted_captions, self._reference_captions),
-            "bleu4": self.bleu4(self._predicted_captions, self._reference_captions),
-            "rouge_fmeasure": self.rouge(self._predicted_captions, self._reference_captions)["rouge1_fmeasure"],
-            "meteor": np.round(self.meteor_meter.get_average(), 4),
-        }
-
+def named_worker_wrapper(name:str, func):
+    def named_worker(*args, **kwargs):
+        return {name: func(*args, **kwargs)}
+    return named_worker
 
 class AverageMeter(object):
     """Simple class to compute a running average of some tracked value and can be printed"""
@@ -72,14 +34,16 @@ class AverageMeter(object):
         if self._count == 0:
             return 0
         return self._sum / self._count
-
+    def reset(self):
+        self._sum = 0
+        self._count = 0
     def update(self, x: float) -> typing.NoReturn:
         self._sum += x
         self._count += 1
 
     def __str__(self) -> str:
         return f"{self._name}: {self.get_average():.4f}"
-
+    
 class EarlyStopping(object):
     def __init__(
         self,
@@ -113,6 +77,57 @@ class EarlyStopping(object):
             self.best_metric = metric
             torch.save(state, self.checkpoint)
             self.counter = 0
+            
+class NLPMetricAggregator(object):
+    """Class for aggregating caption hypotheses and generating NLP metrics"""
+    def __init__(self, inv_word_map:dict) -> None:
+        self.inv_word_map = inv_word_map
+        self.bleu1 = BLEUScore(1)
+        self.bleu2 = BLEUScore(2)
+        self.bleu3 = BLEUScore(3)
+        self.bleu4 = BLEUScore(4)
+        self.rouge = ROUGEScore()
+        self.meteor_meter = AverageMeter()
+        self.reset()
+    
+    def convert_tokens_to_string(self, caption:list) -> str:
+        return " ".join( [self.inv_word_map[tok] for tok in caption if self.inv_word_map[tok] not in ["<pad>", "<start>"] ]).strip()
+    
+    def update(self, predicted: list, reference: list):
+        """Store predictions and references"""
+        predicted = self.convert_tokens_to_string(predicted)
+        reference = [self.convert_tokens_to_string(ref) for ref in reference]
+        # Update Meteor Meter
+        self.meteor_meter.update(meteor_score([word_tokenize(r) for r in reference], word_tokenize(predicted)))
+        self._predicted_captions.append(predicted)
+        self._reference_captions.append(reference)
+    
+    def reset(self):
+        self._predicted_captions = []
+        self._reference_captions = []
+        self.bleu1.reset()
+        self.bleu2.reset()
+        self.bleu3.reset()
+        self.bleu4.reset()
+        self.rouge.reset()
+        self.meteor_meter.reset()
+        
+    def generate_metric_summaries(self):
+        """Retrieves NLP metrics
+        Returns:
+            (dict): A dictionary of NLP metrics generated from stored hypotheses and references
+        """
+        results = {}
+        with Pool(cpu_count()) as pool:
+            jobs = {}
+            for i in range(1,5):
+                jobs[f"bleu{i}"] = pool.apply_async(bleu_score, args=(self._predicted_captions, self._reference_captions, i))
+            jobs["rouge_fmeasure"] = pool.apply_async( rouge_score, args=(self._predicted_captions, self._reference_captions))
+            for name, jib in jobs.items():
+                jib.wait()
+                results.update({name: jib.get()})
+        results.update({"meteor": self.meteor_meter.get_average()})
+        return results
 
 class Flickr30KMetricsCallback(Callback):
     def __init__(self, inv_word_map:dict, caption_reference:dict, sequence_len:int = 30):
