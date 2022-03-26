@@ -10,14 +10,13 @@ At the end of the project, this module should contain the following:
 - Bayesian Meshed Memory Encoder
 - Bayesian Meshed Memory Decoder
 """
-from base64 import encode
+
 import numpy as np
 from typing import Optional, NoReturn, OrderedDict
 import torch.nn as nn
 import torch.optim as optim
 import torch
 
-from utils import AverageMeter
 from .attention import AttentionLayer  # scaled dot product attention
 from .Configuration import Configuration
 import pytorch_lightning as pl
@@ -210,6 +209,7 @@ class DecoderLayer(nn.Module):
         """
         super().__init__()
         self.num_encoder_layers = num_encoder_layers
+        
         # Self Attention Layer
         self.self_attention = AttentionLayer(
             out_size=out_size, key_size=key_size, value_size=value_size, num_heads=num_heads, dropout=dropout_rate
@@ -396,6 +396,7 @@ class MeshedMemoryTransformer(pl.LightningModule):
         out = out[:, :-1].contiguous()
         out = out.view(-1, self.vocab_size)
         loss = self.loss_func(out, y, ignore_index=self.pad_token)
+        self.log("train_loss", loss.detach())
         tqdm_dict = {"train_loss": loss.detach()}
         output = OrderedDict({"loss": loss, "progress_bar":tqdm_dict, "log":tqdm_dict})
         return output
