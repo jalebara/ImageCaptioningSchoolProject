@@ -10,14 +10,13 @@ At the end of the project, this module should contain the following:
 - Bayesian Meshed Memory Encoder
 - Bayesian Meshed Memory Decoder
 """
-from base64 import encode
+
 import numpy as np
 from typing import Optional, NoReturn, OrderedDict
 import torch.nn as nn
 import torch.optim as optim
 import torch
 
-from utils import AverageMeter
 from .attention import AttentionLayer  # scaled dot product attention
 from .Configuration import Configuration
 import pytorch_lightning as pl
@@ -210,6 +209,7 @@ class DecoderLayer(nn.Module):
         """
         super().__init__()
         self.num_encoder_layers = num_encoder_layers
+        
         # Self Attention Layer
         self.self_attention = AttentionLayer(
             out_size=out_size, key_size=key_size, value_size=value_size, num_heads=num_heads, dropout=dropout_rate
@@ -338,7 +338,7 @@ class Decoder(nn.Module):
 
 
 class MeshedMemoryTransformer(pl.LightningModule):
-    def __init__(self, config:Configuration, metric_tracker) -> NoReturn:
+    def __init__(self, config:Configuration) -> NoReturn:
         super().__init__()
         # Training Params
         self.lr = config["learning_rate"]
@@ -348,8 +348,6 @@ class MeshedMemoryTransformer(pl.LightningModule):
         self.start_token = config["start_token"]
         self.pad_token = config["pad_token"]
         self.vocab_size = config["vocabulary_size"]
-        self.metric_tracker = metric_tracker
-        self.metric_tracker.reset()
         # Construct Encoder
         self.encoder = MeshedMemoryEncoder(
             in_size=config["data_size"],
@@ -388,7 +386,7 @@ class MeshedMemoryTransformer(pl.LightningModule):
         return optim.Adam(self.parameters(), lr=self.lr)
     
     def training_step(self, batch, batch_idx):
-        inputs, captions = batch
+        inputs, captions, _ = batch
         out = self(inputs, captions)
         # remove start token for backpropagation
         y = captions[:, 1:].contiguous()
@@ -396,12 +394,13 @@ class MeshedMemoryTransformer(pl.LightningModule):
         out = out[:, :-1].contiguous()
         out = out.view(-1, self.vocab_size)
         loss = self.loss_func(out, y, ignore_index=self.pad_token)
+        self.log("train_loss", loss.detach())
         tqdm_dict = {"train_loss": loss.detach()}
         output = OrderedDict({"loss": loss, "progress_bar":tqdm_dict, "log":tqdm_dict})
         return output
     
     def validation_step(self, batch, batch_idx):
-        inputs, caption = batch
+        inputs, caption, _ = batch
         out = self(inputs, caption)
         
         # remove start token for backpropagation
@@ -412,12 +411,7 @@ class MeshedMemoryTransformer(pl.LightningModule):
         loss = self.loss_func(out, y, ignore_index=self.pad_token)
         tqdm_dict = {"val_loss": loss.detach()}
         self.log("val_loss", loss.detach(), prog_bar=True, on_epoch=True, logger=True)
-        # For validation, we keep it simple and use the greedy approach
-        out = torch.argmax(out, dim=-1).cpu().tolist()
-        y = y.cpu().tolist()
-        self.metric_tracker.update(out, [y])
-        
-        output = OrderedDict({"val_loss": loss, "progress_bar":tqdm_dict, "log":tqdm_dict})
+        output = OrderedDict({"val_loss": loss, "progress_bar":tqdm_dict, "log":tqdm_dict, "val_batch_preds":out})
         return output
     
     def on_epoch_end(self) -> None:

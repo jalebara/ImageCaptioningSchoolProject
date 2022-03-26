@@ -145,7 +145,7 @@ class Flickr30KRegionalFeatures(Flickr30k):
 
         #all_caps = torch.tensor(np.copy()).long()
     
-        return features, target #, [self.annotations[img_id]]
+        return features, target, img_id
     
     def __len__(self) -> int:
         return len(self.ann_list)
