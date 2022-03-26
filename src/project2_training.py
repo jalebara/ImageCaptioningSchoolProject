@@ -16,7 +16,7 @@ from pytorch_lightning import LightningDataModule
 
 from data.augmentation import Flickr30KRegionalFeatures
 
-from models.Configuration import TransformerConfiguration
+from models.Configuration import *
 from models.meshed_memory import MeshedMemoryTransformer
 from models.model_utils import count_parameters
 
@@ -33,7 +33,7 @@ def main():
     smoke_test = args.smoke_test
     
     # Load Config
-    config = TransformerConfiguration()
+    config = BigTransformerConfiguration()
     
     # Load Data
     train = Flickr30KRegionalFeatures( root=data_dir, max_detections=config["max_detections"], smoke_test=smoke_test, mode="train")
