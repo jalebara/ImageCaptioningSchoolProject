@@ -54,3 +54,6 @@ class BeamSearch(object):
 
             # Update best_sequences
             best_sequences = new_best_sequences
+        # We now have the 5 best sequences.... return the best one
+        best_sequence = torch.max(best_sequences, dim=0)
+        return best_sequence
