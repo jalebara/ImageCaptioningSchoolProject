@@ -1,6 +1,7 @@
 # ECE 763 Image Captioning Class Project (Python 3.8.8)
-
+For the project 2 checkpoint, we provide a Colab notebook to run the code and regenerate our results
 
 # Basic Usage
-1. Run the preprocess_data.py script to generate the data archive used for training, validation and testing after unzipping the tarred archives in the flickr30K folder. This should take about 30 minutes
-2. Run extract_sat_attention_maps.py to generate results images on the top performing test results
+1. Open the TeacherVerificationNotebook.ipynb provided in the test directory
+2. Change the relevant paths in the first few cells
+3. Run code to get results
