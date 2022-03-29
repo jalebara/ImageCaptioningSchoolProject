@@ -71,8 +71,6 @@ class Flickr30k(VisionDataset):
                 a, l = job.get()
                 self.annotations.update(a)
                 for id, caps in a.items():
-                    if id not in self.valid_ids:
-                        continue
                     for cap in caps:
                         self.ann_list.append( (id, cap) )
                 self.lengths.update(l)

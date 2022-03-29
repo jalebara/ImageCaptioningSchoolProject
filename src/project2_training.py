@@ -21,12 +21,14 @@ from models.model_utils import count_parameters
 
 from utils import Flickr30KMetricsCallback, TextMessageUpdateCallback
 import os
+from multiprocessing import cpu_count
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser("Project 2 Training")
     parser.add_argument("--smoke_test", action="store_true")
     parser.add_argument("--golden_debug_1", action="store_true")
     parser.add_argument("--data_dir", action="store", type=str, default="/home/jalexbox/Code/school/ece763/class_project/ImageCaptioningProject/flickr30k.exdir")
+    parser.add_argument("--num_workers", action="store", type=int, default=cpu_count())
     return parser.parse_args()
 
 def main():
@@ -34,6 +36,7 @@ def main():
     data_dir = args.data_dir
     smoke_test = args.smoke_test
     gold_overfit = args.golden_debug_1
+    num_workers = args.num_workers
     
     # Load Config
     config = MemoryLessTinyTransformerConfiguration()
@@ -42,8 +45,8 @@ def main():
     train = Flickr30KFeatures( root=data_dir, max_detections=config["max_detections"], feature_mode="region", smoke_test=smoke_test or gold_overfit, mode="train")
     valid = Flickr30KFeatures( root=data_dir, max_detections=config["max_detections"], feature_mode="region", smoke_test=smoke_test or gold_overfit, mode="valid")
     
-    trainloader = DataLoader(train, batch_size=config["batch_size"], num_workers=10)
-    valloader = DataLoader(valid, batch_size=config["batch_size"], num_workers=10)
+    trainloader = DataLoader(train, batch_size=config["batch_size"], num_workers=num_workers)
+    valloader = DataLoader(valid, batch_size=config["batch_size"], num_workers=num_workers)
     
     # Load Model
     lightning_model = MeshedMemoryTransformer(config)
