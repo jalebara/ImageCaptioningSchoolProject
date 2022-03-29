@@ -4,3 +4,6 @@
 [submodule "src/lib/detectron2"]
 	path = src/lib/detectron2
 	url = https://github.com/facebookresearch/detectron2.git
+[submodule "report"]
+	path = report
+	url = https://git.overleaf.com/62014814b6c3d16a2b43aa85

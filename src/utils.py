@@ -16,11 +16,9 @@ import pytorch_lightning as pl
 from pytorch_lightning.utilities.types import STEP_OUTPUT
 from typing import Any, Optional, NoReturn
 from multiprocessing import Pool, cpu_count
+from twilio.rest import Client
+import warnings
 
-def named_worker_wrapper(name:str, func):
-    def named_worker(*args, **kwargs):
-        return {name: func(*args, **kwargs)}
-    return named_worker
 
 class AverageMeter(object):
     """Simple class to compute a running average of some tracked value and can be printed"""
@@ -118,15 +116,20 @@ class NLPMetricAggregator(object):
             (dict): A dictionary of NLP metrics generated from stored hypotheses and references
         """
         results = {}
-        with Pool(cpu_count()) as pool:
-            jobs = {}
-            for i in range(1,5):
-                jobs[f"bleu{i}"] = pool.apply_async(bleu_score, args=(self._predicted_captions, self._reference_captions, i))
-            jobs["rouge_fmeasure"] = pool.apply_async( rouge_score, args=(self._predicted_captions, self._reference_captions))
-            for name, jib in jobs.items():
-                jib.wait()
-                results.update({name: jib.get()})
-        results.update({"meteor": self.meteor_meter.get_average()})
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            with Pool(cpu_count()) as pool:
+                jobs = {}
+                
+                for i in range(1,5):
+                    jobs[f"bleu{i}"] = pool.apply_async(bleu_score, args=(self._predicted_captions, self._reference_captions, i))
+                rougejob = pool.apply_async( rouge_score, args=(self._predicted_captions, self._reference_captions))
+                for name, jib in jobs.items():
+                    jib.wait()
+                    results.update({name: jib.get()})
+                rougejob.wait()
+                results.update({"rouge_fmeasure": rougejob.get()["rougeL_fmeasure"]})
+            results.update({"meteor": self.meteor_meter.get_average()})
         return results
 
 class Flickr30KMetricsCallback(Callback):
@@ -147,9 +150,43 @@ class Flickr30KMetricsCallback(Callback):
 
     def on_validation_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
         metrics = self.tracker.generate_metric_summaries()
+        pl_module.current_epoch_language_metrics = metrics
         self.tracker.reset()
         for metric, value in metrics.items():
             pl_module.log(metric, value)
+            
+    def on_test_batch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule, outputs: Optional[STEP_OUTPUT], batch: Any, batch_idx: int, dataloader_idx: int) -> None:
+        _, _, img_ids = batch
+        batch_predictions = outputs["test_batch_preds"]
+        pred_caps = torch.argmax(batch_predictions, dim=-1) # get token predictions
+        pred_caps = pred_caps.unsqueeze(0).view(-1, self.seq_len - 1)
+        for pred, id in zip(pred_caps.tolist(), img_ids):
+            ref_caps = self.caption_refs[id]
+            self.tracker.update(pred, ref_caps)   
+            
+    def on_test_epoch_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
+        metrics = self.tracker.generate_metric_summaries()
+        pl_module.current_epoch_language_metrics = metrics
+        self.tracker.reset()
+        for metric, value in metrics.items():
+            pl_module.log(f"test_{metric}", value)
+
+class TextMessageUpdateCallback(Callback):
+    def __init__(self, sid:str, auth:str, sms_dest:str) -> None:
+        self.sid = sid
+        self.auth = auth
+        self.dest = sms_dest
+        self.client = Client(sid, auth)
+    
+    def on_validation_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
+        metrics = pl_module.current_epoch_language_metrics
+        bleu4 = metrics["bleu4"]
+        rouge = metrics["rouge_fmeasure"]
+        self.client.messages.create(
+            body=f"Epoch: {pl_module.current_epoch} -- bleu4:{bleu4:.4f}, rougeL:{rouge:.4f}",
+            from_="+13344534283",
+            to=self.dest
+        )
 
 def calc_time(t: float) -> str:
     hours = int(t) // 3600
@@ -168,6 +205,3 @@ def topk_accuracy(yhat: torch.Tensor, y: torch.Tensor, k: int):
 
 def count_trainable_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
-
-def send_text_message(message):
-    raise NotImplementedError

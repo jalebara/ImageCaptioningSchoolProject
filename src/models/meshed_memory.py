@@ -20,6 +20,9 @@ import torch
 from .attention import AttentionLayer  # scaled dot product attention
 from .Configuration import Configuration
 import pytorch_lightning as pl
+from pl_bolts.optimizers import LinearWarmupCosineAnnealingLR
+from pytorch_lightning.utilities.types import STEP_OUTPUT
+from typing import Any
 
 class PWFeedForward(nn.Module):
     def __init__(self, att_size: int, feedforward_size: int, dropout_rate: float) -> NoReturn:
@@ -36,6 +39,9 @@ class PWFeedForward(nn.Module):
         self.relu = nn.ReLU()
         self.layer_norm = nn.LayerNorm(att_size)
         self.dropout = nn.Dropout(dropout_rate)
+        
+        nn.init.xavier_uniform_(self.affine_inner.weight)
+        nn.init.xavier_uniform_(self.affine_outer.weight)
 
     def forward(self, att):
         x = self.relu(self.affine_inner(att))
@@ -151,6 +157,10 @@ class MeshedMemoryEncoder(nn.Module):
         self.dropout = nn.Dropout(dropout_rate)
         self.relu = nn.ReLU()
         self.layer_norm = nn.LayerNorm(out_size)
+        
+        # initialization
+        nn.init.xavier_uniform_(self.input_project.weight)
+
 
     def forward(self, x, attention_weights: Optional[torch.Tensor] = None):
 
@@ -312,14 +322,17 @@ class Decoder(nn.Module):
                 for _ in range(num_layers)
             ]
         )
+        # initializatios
+        nn.init.xavier_uniform_(self.output.weight)
+        self.vocab_embedding.weight.data.uniform_(-1, 1)
 
     def generate_masks(self, y, seq_len):
         masks = (y != self.pad_token).unsqueeze(-1).float()
         # we need to block the left context to avoid cheating with the ground truth
-        self_attention_mask = torch.triu(torch.ones((seq_len, seq_len), dtype=torch.uint8), diagonal=1)
+        self_attention_mask = torch.triu(torch.ones((seq_len, seq_len), dtype=torch.uint8, device=y.device), diagonal=1)
         self_attention_mask = self_attention_mask.unsqueeze(0).unsqueeze(0)
-        self_attention_mask = self_attention_mask.to("cuda:0")
-        self_attention_mask = self_attention_mask + (y == self.pad_token).unsqueeze(1).unsqueeze(1).byte().to("cuda:0")
+        self_attention_mask = self_attention_mask
+        self_attention_mask = self_attention_mask + (y == self.pad_token).unsqueeze(1).unsqueeze(1).byte()
         self_attention_mask = self_attention_mask.gt(0)
         return masks, self_attention_mask
 
@@ -342,12 +355,13 @@ class MeshedMemoryTransformer(pl.LightningModule):
         super().__init__()
         # Training Params
         self.lr = config["learning_rate"]
-        
+        self.batch_size = config["batch_size"]
         self.loss_func = config["loss_function"]
         self.end_token = config["end_token"]
         self.start_token = config["start_token"]
         self.pad_token = config["pad_token"]
         self.vocab_size = config["vocabulary_size"]
+        self.example_input_array = (torch.randn(1,50,1024).cuda(), torch.randint(0,1504, (1,30)).cuda())
         # Construct Encoder
         self.encoder = MeshedMemoryEncoder(
             in_size=config["data_size"],
@@ -376,6 +390,9 @@ class MeshedMemoryTransformer(pl.LightningModule):
             num_heads=config["num_heads"],
             dropout_rate=config["dropout_rate"],
         )
+        for p in self.parameters():
+            if p.dim() > 1:
+                nn.init.xavier_uniform_(p)
         
     def forward(self, data, captions):
         encoded, masks = self.encoder(data)
@@ -383,9 +400,13 @@ class MeshedMemoryTransformer(pl.LightningModule):
         return out
 
     def configure_optimizers(self):
-        return optim.Adam(self.parameters(), lr=self.lr)
+        optimizer = optim.Adam(self.parameters(), lr=self.lr)
+        lr_scheduler = LinearWarmupCosineAnnealingLR(optimizer, 10000, 117659)
+
+        return {"optimizer":optimizer, "lr_scheduler":lr_scheduler}
     
     def training_step(self, batch, batch_idx):
+        self.lr_schedulers().step()
         inputs, captions, _ = batch
         out = self(inputs, captions)
         # remove start token for backpropagation
@@ -394,11 +415,17 @@ class MeshedMemoryTransformer(pl.LightningModule):
         out = out[:, :-1].contiguous()
         out = out.view(-1, self.vocab_size)
         loss = self.loss_func(out, y, ignore_index=self.pad_token)
-        self.log("train_loss", loss.detach())
+        self.log("train_loss", loss.detach(), batch_size=self.batch_size)
         tqdm_dict = {"train_loss": loss.detach()}
         output = OrderedDict({"loss": loss, "progress_bar":tqdm_dict, "log":tqdm_dict})
         return output
     
+    def on_train_start(self) -> None:
+        self.logger.experiment.add_graph(self, self.example_input_array)
+        
+    def on_train_batch_end(self, outputs: STEP_OUTPUT, batch: Any, batch_idx: int, unused: Optional[int] = 0) -> None:
+        self.lr_schedulers().step()
+        
     def validation_step(self, batch, batch_idx):
         inputs, caption, _ = batch
         out = self(inputs, caption)
@@ -410,12 +437,24 @@ class MeshedMemoryTransformer(pl.LightningModule):
         out = out.view(-1, self.vocab_size)
         loss = self.loss_func(out, y, ignore_index=self.pad_token)
         tqdm_dict = {"val_loss": loss.detach()}
-        self.log("val_loss", loss.detach(), prog_bar=True, on_epoch=True, logger=True)
+        self.log("val_loss", loss.detach(), prog_bar=True, on_epoch=True, logger=True, batch_size=self.batch_size)
         output = OrderedDict({"val_loss": loss, "progress_bar":tqdm_dict, "log":tqdm_dict, "val_batch_preds":out})
         return output
     
-    def on_epoch_end(self) -> None:
-        pass
+    def test_step(self, batch, batch_idx):
+        inputs, caption, _ = batch
+        out = self(inputs, caption)
+        
+        # remove start token for backpropagation
+        y = caption[:, 1:].contiguous()
+        y = y.view(-1)
+        out = out[:, :-1].contiguous()
+        out = out.view(-1, self.vocab_size)
+        loss = self.loss_func(out, y, ignore_index=self.pad_token)
+        tqdm_dict = {"test_loss": loss.detach()}
+        self.log("test_loss", loss.detach(), prog_bar=True, on_epoch=True, logger=True, batch_size=self.batch_size)
+        output = OrderedDict({"test_loss": loss, "progress_bar":tqdm_dict, "log":tqdm_dict, "test_batch_preds":out})
+        return output
     
 class BayesianEncoder(nn.Module):
     def __init__(self) -> None:

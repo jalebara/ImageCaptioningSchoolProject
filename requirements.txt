@@ -13,3 +13,4 @@ exdir
 rouge
 scikit-image
 pytorch-lightning
+lightning-bolts
