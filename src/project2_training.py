@@ -26,11 +26,13 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser("Project 2 Training")
     parser.add_argument("--smoke_test", action="store_true")
     parser.add_argument("--data_dir", action="store", type=str, default="/home/jalexbox/Code/school/ece763/class_project/ImageCaptioningProject/flickr30k.exdir")
+    parser.add_argument("--num_workers", action="store", type=int, default="12")
     return parser.parse_args()
 def main():
     args = parse_args()
     data_dir = args.data_dir
     smoke_test = args.smoke_test
+    num_workers = args.num_workers
     
     # Load Config
     config = MediumDroppyTransformerConfiguration()

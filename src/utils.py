@@ -80,8 +80,9 @@ class EarlyStopping(object):
             
 class NLPMetricAggregator(object):
     """Class for aggregating caption hypotheses and generating NLP metrics"""
-    def __init__(self, inv_word_map:dict) -> None:
+    def __init__(self, inv_word_map:dict, vocab_size:int=2004) -> None:
         self.inv_word_map = inv_word_map
+        self.vocab_size = vocab_size
         self.bleu1 = BLEUScore(1)
         self.bleu2 = BLEUScore(2)
         self.bleu3 = BLEUScore(3)
@@ -91,7 +92,21 @@ class NLPMetricAggregator(object):
         self.reset()
     
     def convert_tokens_to_string(self, caption:list) -> str:
-        return " ".join( [self.inv_word_map[tok] for tok in caption if self.inv_word_map[tok] not in ["<pad>", "<start>"] ]).strip()
+        #return " ".join( [self.inv_word_map[tok] for tok in caption if self.inv_word_map[tok] not in ["<pad>", "<start>"] ]).strip()
+        # There are some tokens that are outside of the vocab in the test set
+        # This is just here to rectify that (idk how to do it with the previous syntax)
+        acc = ""
+        for tok in caption:
+            # If the token is outside the vocab, set it to <unc>
+            if tok >= self.vocab_size:
+                acc += " <unc>"
+            # If the token is a pad or start token
+            elif self.inv_word_map[tok] in ["<pad>", "<start>"]:
+                continue
+            else:
+                acc += " " + self.inv_word_map[tok]
+        acc = acc.strip()
+        return acc
     
     def update(self, predicted: list, reference: list):
         """Store predictions and references"""
