@@ -83,6 +83,7 @@ class Attention(nn.Module):
         # Xavier Uniform yields good initialization
         nn.init.xavier_uniform_(self.keygen.weight)
         nn.init.xavier_uniform_(self.querygen.weight)
+        nn.init.xavier_uniform_(self.output.weight)
         nn.init.xavier_normal_(self.valuegen.weight)
 
         # set bias to zero

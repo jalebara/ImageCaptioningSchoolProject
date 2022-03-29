@@ -16,11 +16,9 @@ import pytorch_lightning as pl
 from pytorch_lightning.utilities.types import STEP_OUTPUT
 from typing import Any, Optional, NoReturn
 from multiprocessing import Pool, cpu_count
+from twilio.rest import Client
+import warnings
 
-def named_worker_wrapper(name:str, func):
-    def named_worker(*args, **kwargs):
-        return {name: func(*args, **kwargs)}
-    return named_worker
 
 class AverageMeter(object):
     """Simple class to compute a running average of some tracked value and can be printed"""
@@ -80,8 +78,10 @@ class EarlyStopping(object):
             
 class NLPMetricAggregator(object):
     """Class for aggregating caption hypotheses and generating NLP metrics"""
-    def __init__(self, inv_word_map:dict) -> None:
+    def __init__(self, inv_word_map:dict, vocab_size:int=2004) -> None:
         self.inv_word_map = inv_word_map
+        self.vocab_size = vocab_size
+        self.meteor_score_tracker = []
         self.bleu1 = BLEUScore(1)
         self.bleu2 = BLEUScore(2)
         self.bleu3 = BLEUScore(3)
@@ -91,20 +91,38 @@ class NLPMetricAggregator(object):
         self.reset()
     
     def convert_tokens_to_string(self, caption:list) -> str:
-        return " ".join( [self.inv_word_map[tok] for tok in caption if self.inv_word_map[tok] not in ["<pad>", "<start>"] ]).strip()
+        #return " ".join( [self.inv_word_map[tok] for tok in caption if self.inv_word_map[tok] not in ["<pad>", "<start>"] ]).strip()
+        # There are some tokens that are outside of the vocab in the test set
+        # This is just here to rectify that (idk how to do it with the previous syntax)
+        acc = ""
+        for tok in caption:
+            # If the token is outside the vocab, set it to <unc>
+            if tok >= self.vocab_size:
+                acc += " <unc>"
+            # If the token is a pad or start token
+            elif self.inv_word_map[tok] in ["<pad>", "<start>"]:
+                continue
+            else:
+                acc += " " + self.inv_word_map[tok]
+        acc = acc.strip()
+        return acc
     
-    def update(self, predicted: list, reference: list):
+    def update(self, predicted: list, reference: list, img_id:str=None):
         """Store predictions and references"""
         predicted = self.convert_tokens_to_string(predicted)
         reference = [self.convert_tokens_to_string(ref) for ref in reference]
         # Update Meteor Meter
-        self.meteor_meter.update(meteor_score([word_tokenize(r) for r in reference], word_tokenize(predicted)))
+        meteor = meteor_score([word_tokenize(r) for r in reference], word_tokenize(predicted))
+        self.meteor_meter.update(meteor)
+        if img_id is not None:
+            self.meteor_score_tracker.append( (img_id, meteor, predicted, reference) )
         self._predicted_captions.append(predicted)
         self._reference_captions.append(reference)
     
     def reset(self):
         self._predicted_captions = []
         self._reference_captions = []
+        self._image_ids = []
         self.bleu1.reset()
         self.bleu2.reset()
         self.bleu3.reset()
@@ -112,26 +130,36 @@ class NLPMetricAggregator(object):
         self.rouge.reset()
         self.meteor_meter.reset()
         
+    def get_individual_scores(self):
+        """Scores individual captions by bleu4 score
+        """
+        return self.meteor_score_tracker
+    
     def generate_metric_summaries(self):
         """Retrieves NLP metrics
         Returns:
             (dict): A dictionary of NLP metrics generated from stored hypotheses and references
         """
         results = {}
-        with Pool(cpu_count()) as pool:
-            jobs = {}
-            for i in range(1,5):
-                jobs[f"bleu{i}"] = pool.apply_async(bleu_score, args=(self._predicted_captions, self._reference_captions, i))
-            jobs["rouge_fmeasure"] = pool.apply_async( rouge_score, args=(self._predicted_captions, self._reference_captions))
-            for name, jib in jobs.items():
-                jib.wait()
-                results.update({name: jib.get()})
-        results.update({"meteor": self.meteor_meter.get_average()})
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            with Pool(cpu_count()) as pool:
+                jobs = {}
+                
+                for i in range(1,5):
+                    jobs[f"bleu{i}"] = pool.apply_async(bleu_score, args=(self._predicted_captions, self._reference_captions, i))
+                rougejob = pool.apply_async( rouge_score, args=(self._predicted_captions, self._reference_captions))
+                for name, jib in jobs.items():
+                    jib.wait()
+                    results.update({name: jib.get()})
+                rougejob.wait()
+                results.update({"rouge_fmeasure": rougejob.get()["rougeL_fmeasure"]})
+            results.update({"meteor": self.meteor_meter.get_average()})
         return results
 
 class Flickr30KMetricsCallback(Callback):
     def __init__(self, inv_word_map:dict, caption_reference:dict, sequence_len:int = 30):
-        self.tracker = NLPMetricAggregator(inv_word_map)
+        self.tracker = NLPMetricAggregator(inv_word_map, len(inv_word_map))
         self.tracker.reset()
         self.caption_refs = caption_reference
         self.seq_len = sequence_len
@@ -147,9 +175,55 @@ class Flickr30KMetricsCallback(Callback):
 
     def on_validation_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
         metrics = self.tracker.generate_metric_summaries()
+        pl_module.current_epoch_language_metrics = metrics
         self.tracker.reset()
         for metric, value in metrics.items():
             pl_module.log(metric, value)
+            
+    def on_test_batch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule, outputs: Optional[STEP_OUTPUT], batch: Any, batch_idx: int, dataloader_idx: int) -> None:
+        if outputs is None:
+            return
+        _, _, img_ids = batch
+        pred_caps = outputs["test_batch_preds"]
+        ids = outputs["test_image_ids"]
+        for pred, id in zip([pred_caps.tolist()], img_ids):
+            ref_caps = self.caption_refs[id]
+            self.tracker.update(pred, ref_caps, ids)   
+            
+    def on_test_epoch_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
+        metrics = self.tracker.generate_metric_summaries()
+        pl_module.current_epoch_language_metrics = metrics
+        for metric, value in metrics.items():
+            pl_module.log(f"test_{metric}", value)
+        scores = self.tracker.get_individual_scores()
+        scores.sort(key=lambda x: x[1], reverse=True)
+        print(scores[:5])
+
+class TextMessageUpdateCallback(Callback):
+    def __init__(self, sid:str, auth:str, sms_dest:str) -> None:
+        self.sid = sid
+        self.auth = auth
+        self.dest = sms_dest
+        self.client = Client(sid, auth)
+    
+    def on_validation_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
+        metrics = pl_module.current_epoch_language_metrics
+        bleu4 = metrics["bleu4"]
+        rouge = metrics["rouge_fmeasure"]
+        self.client.messages.create(
+            body=f"Epoch: {pl_module.current_epoch}\nbleu4:{bleu4:.4f}\nrougeL:{rouge:.4f}",
+            from_="+13344534283",
+            to=self.dest
+        )
+    def on_test_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
+        metrics = pl_module.current_epoch_language_metrics
+        bleu4 = metrics["bleu4"]
+        rouge = metrics["rouge_fmeasure"]
+        self.client.messages.create(
+            body=f"Test Results\nbleu4:{bleu4:.4f}\nrougeL:{rouge:.4f}",
+            from_="+13344534283",
+            to=self.dest
+        )
 
 def calc_time(t: float) -> str:
     hours = int(t) // 3600
@@ -168,6 +242,3 @@ def topk_accuracy(yhat: torch.Tensor, y: torch.Tensor, k: int):
 
 def count_trainable_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
-
-def send_text_message(message):
-    raise NotImplementedError

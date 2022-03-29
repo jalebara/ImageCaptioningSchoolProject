@@ -52,9 +52,9 @@ class Flickr30k(VisionDataset):
         self.archive = archive.require_group(mode)
         
 
-        data_keys = list(self.archive.keys())
+        data_keys = list( set(self.archive.keys()).intersection(set(self.valid_ids)))
         if smoke_test:
-            data_keys = data_keys[:10]
+            data_keys = data_keys[:2]
         elif fast_test:
             data_keys = data_keys[: int(len(data_keys) * 0.1)]
         # Read tokenized captions and store in dict
@@ -71,8 +71,6 @@ class Flickr30k(VisionDataset):
                 a, l = job.get()
                 self.annotations.update(a)
                 for id, caps in a.items():
-                    if id not in self.valid_ids:
-                        continue
                     for cap in caps:
                         self.ann_list.append( (id, cap) )
                 self.lengths.update(l)
@@ -115,10 +113,12 @@ class Flickr30k(VisionDataset):
         return len(self.ids) * 5
 
 
-class Flickr30KRegionalFeatures(Flickr30k):
-    def __init__(self, max_detections, *args, **kwargs) -> NoReturn:
+class Flickr30KFeatures(Flickr30k):
+    def __init__(self, max_detections, feature_mode="global", *args, **kwargs) -> NoReturn:
         self.max_detect = max_detections
+        self.feature_mode = feature_mode
         super().__init__( *args, **kwargs)
+        
     def __getitem__(self, index: int) -> Tuple[Any, Any]:
         """
         Args:
@@ -130,19 +130,22 @@ class Flickr30KRegionalFeatures(Flickr30k):
         img_id, target = self.ann_list[index]
 
         # Image
-        features = np.copy(self.archive[img_id]["region_features"][:])
-        if features.shape[0] > self.max_detect:
-            features = features[:self.max_detect, :]
-        elif features.shape[0] < self.max_detect:
-            diff = self.max_detect - features.shape[0]
-            features = np.concatenate([features, np.zeros( (diff, features.shape[1]) )])
+        if self.feature_mode == "region":
+            features = np.copy(self.archive[img_id]["region_features"][:])
+            if features.shape[0] > self.max_detect:
+                features = features[:self.max_detect, :]
+            elif features.shape[0] < self.max_detect:
+                diff = self.max_detect - features.shape[0]
+                features = np.concatenate([features, np.zeros( (diff, features.shape[1]) )])
+        else:
+           features = np.copy(self.archive[img_id]["global_features"][:])[None,:] 
 
         features = torch.tensor(features).float()
+        
         # Captions
         target = torch.tensor(target).long()
         if self.target_transform is not None:
             target = self.target_transform(target)
-
         #all_caps = torch.tensor(np.copy()).long()
     
         return features, target, img_id
