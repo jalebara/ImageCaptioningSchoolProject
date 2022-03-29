@@ -1,3 +1,4 @@
+#!/bin/env python3.8
 """Evaluates a trained meshed memory transformer.
 Using the test set, this script generates the following NLP metrics:
 BLEU-1, BLEU-2, BLEU-3, BLEU-4, ROUGE, and METEOR. It also generates
