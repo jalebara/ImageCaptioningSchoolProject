@@ -225,6 +225,12 @@ class TextMessageUpdateCallback(Callback):
             to=self.dest
         )
 
+class ReinforcementLearningSwitchCallback(Callback):
+    def __init__(self) -> NoReturn:
+        super().__init__()
+        raise NotImplementedError
+    
+
 def calc_time(t: float) -> str:
     hours = int(t) // 3600
     minutes = int(t - hours * 3600) // 60

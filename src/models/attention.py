@@ -336,9 +336,17 @@ class AttentionLayer(nn.Module):
         return output
 
 
-class BayesianAttention(Attention):
-    def __init__(self) -> None:
+class ProbabilisticAttentionWeights(nn.Module):
+    def __init__(self, key_size:int, query_size:int, out_size:int) -> None:
         super().__init__()
+    
+    def sample_weights(self):
+        pass
+    
+
+class BayesianAttention(Attention):
+    def __init__(self, mode:str="weibull", *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
         raise NotImplementedError
 
 
