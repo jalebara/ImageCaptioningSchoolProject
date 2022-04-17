@@ -19,7 +19,6 @@ from multiprocessing import Pool, cpu_count
 from twilio.rest import Client
 import warnings
 
-
 class AverageMeter(object):
     """Simple class to compute a running average of some tracked value and can be printed"""
 

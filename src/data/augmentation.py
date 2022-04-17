@@ -112,7 +112,6 @@ class Flickr30k(VisionDataset):
     def __len__(self) -> int:
         return len(self.ids) * 5
 
-
 class Flickr30KFeatures(Flickr30k):
     def __init__(self, max_detections, feature_mode="global", *args, **kwargs) -> NoReturn:
         self.max_detect = max_detections

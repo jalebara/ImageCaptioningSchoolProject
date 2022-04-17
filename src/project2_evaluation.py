@@ -47,7 +47,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser("Project 2 Training")
     parser.add_argument("--smoke_test", action="store_true", default=False)
     parser.add_argument("--data_dir", action="store", type=str, default="../flickr30k.exdir")
-    parser.add_argument("--checkpoint", action="store", type=str, default="../epoch=57-val_loss=2.91.ckpt")
+    parser.add_argument("--checkpoint", action="store", type=str, default="./best_project2_checkpoint.ckpt")
     parser.add_argument("--num_workers", action="store", type=int, default=12)
     return parser.parse_args()
 
