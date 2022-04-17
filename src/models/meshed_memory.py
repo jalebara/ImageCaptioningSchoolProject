@@ -23,6 +23,7 @@ import pytorch_lightning as pl
 from pl_bolts.optimizers import LinearWarmupCosineAnnealingLR
 from pytorch_lightning.utilities.types import STEP_OUTPUT
 from typing import Any
+from .model_utils import BeamSearch
 
 # This is just a hacky way to get NLPMetricsAggregator in here
 # I know this is not the way PL was meant to be used
@@ -361,6 +362,7 @@ class Decoder(nn.Module):
 
 class MeshedMemoryTransformer(pl.LightningModule):
     def __init__(self, config:Configuration, beam_size=5, inv_word_map: dict=None, reference_captions: dict=None) -> None:
+        self.comp_device = "cuda" if torch.cuda.is_available() else "cpu"
         super().__init__()
         # Test params/stuff
         self.beam_size = beam_size
@@ -374,7 +376,7 @@ class MeshedMemoryTransformer(pl.LightningModule):
         self.start_token = config["start_token"]
         self.pad_token = config["pad_token"]
         self.vocab_size = config["vocabulary_size"]
-        self.example_input_array = (torch.randn(1,50,1024).cuda(), torch.randint(0,1504, (1,30)).cuda())
+        self.example_input_array = (torch.randn(1,50,1024).to(self.comp_device), torch.randint(0,1504, (1,30)).to(self.comp_device))
         # Construct Encoder
         self.encoder = MeshedMemoryEncoder(
             in_size=config["data_size"],
@@ -462,84 +464,10 @@ class MeshedMemoryTransformer(pl.LightningModule):
         if filename == self.previous_image:
             return
         self.previous_image = filename
-        # Get all the captions
-        best_sequences = torch.full([self.beam_size, self.max_sequence_length], self.pad_token).to(inputs.device)
-        # Fill first column with start tokens
-        best_sequences[:, 0] = torch.full([self.beam_size], self.start_token).to(inputs.device)
-        # Keep list of best_scores
-        best_scores = torch.full([self.beam_size], 0.0).to(inputs.device)
-
-        # Do the first set of words manually, since each of the 5 best sequences are the same thing
-        first_sequence = self(inputs, best_sequences[0, :].unsqueeze(0)).squeeze(0).to(inputs.device)
-        # The network doesn't output a <start> token
-        # so the first word is actually the 0th row, not the 1st
-        first_words_under_consideration = first_sequence[0, :]
-        first_words_under_consideration = torch.nn.functional.softmax(first_words_under_consideration, dim=-1)
-        first_scores, first_best_words = torch.topk(first_words_under_consideration, self.beam_size)
-        #print(first_scores)
-        # first_scores originally is 1x1x5, this makes it 5
-        first_scores = torch.log(first_scores).squeeze(0).squeeze(0)
-
-        
-        best_sequences[:, 1] = first_best_words
-        best_scores += first_scores
-    
-        for i in range(2, self.max_sequence_length):
-            scores = torch.full([self.beam_size*self.beam_size], 0.0).to(inputs.device)
-            words = torch.full([self.beam_size*self.beam_size], self.pad_token).to(inputs.device)
-            for j in range(0, self.beam_size):
-                # First, if the sequence is finished (end_token encountered), we don't want to consider any successors to this node
-                # We can check this by seeing if the sequence contains the end_token
-                if self.end_token in best_sequences[j]:
-                    # To "disable" this node we set the first temp_score to the best_score for this node
-                    scores[self.beam_size*j] = best_scores[j]
-                    # We don't need to anything with the corresponding word since words was set to pad_token originally anyways
-                    # The rest of the scores to 0 (so they won't be chosen by topk)
-                    # Probability is 0, so log probability is -inf
-                    scores[range(self.beam_size*j+1, self.beam_size*j+self.beam_size)] = -float("Inf")
-                # Otherwise continue as normal
-                else:
-                    # temp_seq is max_sequence_length x vocab_size (30 x 2004)
-                    temp_seq = self.forward(inputs, best_sequences[j, :].unsqueeze(0)).squeeze(0)
-                
-                    # Only care about the words in the i-1th (because no start token) column, get this and turn it into row
-                    words_under_consideration = temp_seq[i-1, :]
-                    words_under_consideration = torch.nn.functional.softmax(words_under_consideration, dim=-1)
-                    # Get the beam_size best words in words_under_consideration
-                    temp_scores, temp_best_words = torch.topk(words_under_consideration, self.beam_size)
-                    # Add the score of the jth best sequence to temp_scores
-                    temp_scores = torch.log(temp_scores) + best_scores[j]
-                
-                    # Put the temp_scores and temp_best_words into the scores and words tensor
-                    scores[range(self.beam_size*j, self.beam_size*j+self.beam_size)] = temp_scores
-                    words[range(self.beam_size*j, self.beam_size*j+self.beam_size)] = temp_best_words
-            # words now contains the beam_size^2 best successor words, i.e. the beam_size successors to each of the beam_size nodes
-            # scores now contains the corresponding scores
-            # Compute the 5 best choices for successor words (indices)...
-            best_candidate_scores, best_candidate_words_idxs = torch.topk(scores, self.beam_size)
-            # ... find the sequences we are tacking them on to
-            sequences_for_best_candidate_words = torch.div(best_candidate_words_idxs, self.beam_size, rounding_mode='floor')
-            # ... and finally the words themselves
-            best_candidate_words = words[best_candidate_words_idxs]
-            new_best_sequences = torch.full([self.beam_size, self.max_sequence_length], self.pad_token)
-            new_best_scores = torch.full([self.beam_size], 0.0)
-            for k in range(0, self.beam_size):
-                new_best_sequences[k, :] = best_sequences[sequences_for_best_candidate_words[k]]
-                new_best_sequences[k, i] = best_candidate_words[k]
-                new_best_scores[k] = best_candidate_scores[k]
-            best_sequences = new_best_sequences
-            best_scores = new_best_scores
-        
-        # Now, we have the 5 best sequences overall
-        # Find the best one
-        best_sequence_score, best_sequence_idx = torch.max(best_scores, dim=0, keepdim=True)
-        best_sequence = best_sequences[best_sequence_idx, :].squeeze(0)
-        result = {
-            "test_batch_preds": best_sequence,   
-            "test_image_ids": filename         
-        }
-        result = OrderedDict(result)
+        result = BeamSearch(self, inputs, 5)
+        result["test_image_ids"] = filename
         return result
+        
     
 class BayesianEncoder(nn.Module):
     def __init__(self) -> None:
