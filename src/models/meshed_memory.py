@@ -25,13 +25,6 @@ from pytorch_lightning.utilities.types import STEP_OUTPUT
 from typing import Any
 from .model_utils import BeamSearch
 
-# This is just a hacky way to get NLPMetricsAggregator in here
-# I know this is not the way PL was meant to be used
-import sys
-import os
-sys.path.insert(1, os.path.join(sys.path[0], '..'))
-from utils import NLPMetricAggregator
-# End hacky way
 
 class PWFeedForward(nn.Module):
     def __init__(self, att_size: int, feedforward_size: int, dropout_rate: float) -> NoReturn:

@@ -216,10 +216,11 @@ class TextMessageUpdateCallback(Callback):
         )
     def on_test_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
         metrics = pl_module.current_epoch_language_metrics
+        model_version = pl_module._version
         bleu4 = metrics["bleu4"]
         rouge = metrics["rouge_fmeasure"]
         self.client.messages.create(
-            body=f"Test Results\nbleu4:{bleu4:.4f}\nrougeL:{rouge:.4f}",
+            body=f"Test Results from version {model_version}\nbleu4:{bleu4:.4f}\nrougeL:{rouge:.4f}",
             from_="+13344534283",
             to=self.dest
         )

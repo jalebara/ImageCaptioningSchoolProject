@@ -113,9 +113,11 @@ class Flickr30k(VisionDataset):
         return len(self.ids) * 5
 
 class Flickr30KFeatures(Flickr30k):
-    def __init__(self, max_detections, feature_mode="global", *args, **kwargs) -> NoReturn:
+    def __init__(self, max_detections, feature_mode="global", lazy_cache=False, *args, **kwargs) -> NoReturn:
         self.max_detect = max_detections
         self.feature_mode = feature_mode
+        self.cache_mode = lazy_cache
+        self.cached = dict()
         super().__init__( *args, **kwargs)
         
     def __getitem__(self, index: int) -> Tuple[Any, Any]:
@@ -127,6 +129,10 @@ class Flickr30KFeatures(Flickr30k):
             tuple: Tuple (features, target). target is a list of captions for the image.
         """
         img_id, target = self.ann_list[index]
+        cached = self.cached.get(img_id, False)
+        if self.cache_mode and self.cached.get(img_id, False): # Lazy load data
+            features, target = cached
+            return features, target, img_id
 
         # Image
         if self.feature_mode == "region":
@@ -146,7 +152,8 @@ class Flickr30KFeatures(Flickr30k):
         if self.target_transform is not None:
             target = self.target_transform(target)
         #all_caps = torch.tensor(np.copy()).long()
-    
+        if self.cache_mode:
+            self.cached[img_id] = ( features, target )
         return features, target, img_id
     
     def __len__(self) -> int:
