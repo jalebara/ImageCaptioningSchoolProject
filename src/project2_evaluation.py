@@ -43,6 +43,7 @@ from models.model_utils import count_parameters
 
 from utils import Flickr30KMetricsCallback, TextMessageUpdateCallback
 
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser("Project 2 Training")
     parser.add_argument("--smoke_test", action="store_true", default=False)
@@ -51,40 +52,50 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num_workers", action="store", type=int, default=12)
     return parser.parse_args()
 
+
 def main():
     args = parse_args()
     data_dir = args.data_dir
     smoke_test = args.smoke_test
-    checkpoint= args.checkpoint
+    checkpoint = args.checkpoint
     num_workers = args.num_workers
-    
+
     # Load Config
     config = MemoryLessTinyTransformerConfiguration()
-    
+
     # Load Data
-    test = Flickr30KFeatures( root=data_dir, max_detections=config["max_detections"], feature_mode="region", smoke_test=smoke_test, mode="test")
+    test = Flickr30KFeatures(
+        root=data_dir,
+        max_detections=config["max_detections"],
+        feature_mode="region",
+        smoke_test=smoke_test,
+        mode="test",
+    )
     testloader = DataLoader(test, batch_size=1, num_workers=num_workers)
 
     test_captions = test.annotations
-    
+
     # Load Model
     lightning_model = MeshedMemoryTransformer(config, beam_size=5)
     trainable, total = count_parameters(lightning_model)
     metric_callback = Flickr30KMetricsCallback(test.inv_word_map, test.annotations)
-    
+
     # Text Message Updates
     if os.environ.get("TWILIO_ACCOUNT_SID", None) is not None:
-        callbacks = [ 
+        callbacks = [
             metric_callback,
-            TextMessageUpdateCallback(os.environ["TWILIO_ACCOUNT_SID"], os.environ["TWILIO_AUTH_TOKEN"], os.environ["SMS_RECIPIENT"])
+            TextMessageUpdateCallback(
+                os.environ["TWILIO_ACCOUNT_SID"], os.environ["TWILIO_AUTH_TOKEN"], os.environ["SMS_RECIPIENT"]
+            ),
         ]
     else:
-        callbacks = [ 
+        callbacks = [
             metric_callback,
         ]
     # Trainer
     trainer = pl.Trainer(max_epochs=config["epochs"], fast_dev_run=smoke_test, callbacks=callbacks)
-    trainer.test(model = lightning_model, dataloaders=testloader, ckpt_path=checkpoint, verbose=True)
-    
+    trainer.test(model=lightning_model, dataloaders=testloader, ckpt_path=checkpoint, verbose=True)
+
+
 if __name__ == "__main__":
     main()

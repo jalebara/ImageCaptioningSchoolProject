@@ -1,4 +1,3 @@
-
 """ Performs hyperparameter optimization using the Ray Tune library. This code eases the burden of manually 
 finding the best hyperparameters, leaving more time for working on other aspects of the learning pipeline.
 """
@@ -8,11 +7,9 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import TensorBoardLogger
-from ray_lightning import RayPlugin
-from ray_lightning.tune import TuneReportCheckpointCallback, get_tune_resources
+from ray.tune.integration.pytorch_lightning import TuneReportCheckpointCallback
 from ray import tune
-import warnings
-
+import uuid
 
 from data.augmentation import Flickr30KFeatures
 
@@ -24,58 +21,107 @@ from utils import Flickr30KMetricsCallback, TextMessageUpdateCallback
 import os
 from multiprocessing import cpu_count
 
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser("Project 2 Training")
     parser.add_argument("--smoke_test", action="store_true")
-    parser.add_argument("--golden_debug_1", action="store_true")
-    parser.add_argument("--data_dir", action="store", type=str, default="/home/jalexbox/Code/school/ece763/class_project/ImageCaptioningProject/flickr30k.exdir")
-    parser.add_argument("--num_workers", action="store", type=int, default=cpu_count())
+    parser.add_argument(
+        "--data_dir",
+        action="store",
+        type=str,
+        default="/home/jalexbox/Code/school/ece763/class_project/ImageCaptioningProject/flickr30k.exdir",
+    )
+    parser.add_argument("--num_workers", action="store", type=int, default=8)
     return parser.parse_args()
 
-def xe_parameter_optimization(config):
+def trial_name_generator(trial):
+    return f"{str(uuid.uuid4())}"
+
+def xe_parameter_optimization(config, **train_params):
     # Load Data
-    train = Flickr30KFeatures( root=config["data_dir"], max_detections=config["max_detections"], feature_mode="region",  mode="train")
-    valid = Flickr30KFeatures( root=config["data_dir"], max_detections=config["max_detections"], feature_mode="region", mode="valid")
+    print("Starting New Trial")
+    train = Flickr30KFeatures(
+        root=train_params["data_dir"],
+        max_detections=train_params["max_detections"],
+        smoke_test=train_params["smoke_test"],
+        lazy_cache=True,
+        feature_mode="region",
+        mode="train",
+        disable_progress_bar=True,
+        num_processes=10,
+    )
+    valid = Flickr30KFeatures(
+        root=train_params["data_dir"],
+        max_detections=train_params["max_detections"],
+        smoke_test=train_params["smoke_test"],
+        lazy_cache=True,
+        feature_mode="region",
+        mode="valid",
+        disable_progress_bar=True,
+        num_processes=10
+    )
+    print("Configuring Dataloaders")
+    trainloader = DataLoader(train, batch_size=config["batch_size"], num_workers=train_params["num_data_workers"])
+    valloader = DataLoader(valid, batch_size=config["batch_size"], num_workers=train_params["num_data_workers"])
+    config.update(train_params)
     
-    trainloader = DataLoader(train, batch_size=config["batch_size"], lazy_cache=True, num_workers=cpu_count())
-    valloader = DataLoader(valid, batch_size=config["batch_size"], lazy_cache=True, num_workers=cpu_count())
-    
+    print("Constructing Model")
     # Load Model
-    lightning_model = MeshedMemoryTransformer(TransformerConfiguration(config))
-    trainable, total = count_parameters(lightning_model)
-    
+    config = TransformerConfiguration(config)
+    lightning_model = MeshedMemoryTransformer(config)
+
+    print("Constructing Callbacks")
     # Model Checkpointing
+    checkpoint_callback = pl.callbacks.ModelCheckpoint(monitor="bleu4", filename="{epoch}-{bleu4:.4f}", mode="max")
     lr_monitor_callback = pl.callbacks.LearningRateMonitor()
-    
+
     # Language Metric Aggregation
     metric_callback = Flickr30KMetricsCallback(valid.inv_word_map, valid.annotations)
-    
+
     # Text Message Updates
     if os.environ.get("TWILIO_ACCOUNT_SID", None) is not None:
-        callbacks = [ 
+        print("Texting Enabled")
+        callbacks = [
             metric_callback,
+            checkpoint_callback,
             lr_monitor_callback,
-            TextMessageUpdateCallback(os.environ["TWILIO_ACCOUNT_SID"], os.environ["TWILIO_AUTH_TOKEN"], os.environ["SMS_RECIPIENT"])
+            TextMessageUpdateCallback(
+                os.environ["TWILIO_ACCOUNT_SID"], os.environ["TWILIO_AUTH_TOKEN"], os.environ["SMS_RECIPIENT"]
+            ),
         ]
     else:
-        callbacks = [ 
+        callbacks = [
             metric_callback,
+            checkpoint_callback,
             lr_monitor_callback,
         ]
-    metrics = {"loss": "ptl/val_loss", "meteor":"ptl/meteor"}
+    print("Creating Tune Callback")
+    metrics = {"meteor": "meteor"}
     callbacks.append(TuneReportCheckpointCallback(metrics, on="validation_end"))
+    # Plugins
 
     # Cross Entropy Training
-    trainer = pl.Trainer(max_epochs=config["epochs"], accelerator="auto", callbacks=callbacks)
+    print("Building Trainer")
+    trainer = pl.Trainer(
+        max_epochs=config["epochs"],
+        accelerator="auto",
+        callbacks=callbacks,
+        logger=TensorBoardLogger(save_dir=tune.get_trial_dir(), name="", version="."),
+        gpus=1,
+        progress_bar_refresh_rate=100,
+    )
+    print("Training Model")
     trainer.fit(lightning_model, trainloader, valloader)
 
 
 def main():
     args = parse_args()
     data_dir = args.data_dir
-    
+    smoke_test = args.smoke_test
     # Load Config
-    config = {
+    constant_configs = {
+        # Testing vars
+        "smoke_test": smoke_test,
         # Constant across runs
         "data_dir": data_dir,
         "vocabulary_size": 2004,
@@ -84,38 +130,44 @@ def main():
         "data_size": 1024,
         "end_token": 1,
         "start_token": 3,
-        "max_detections":50,
+        "max_detections": 50,
+        "num_data_workers": 10
+    }
+    config = {
         # parameters to vary
-        "key_size": tune.randint(8,64),
-        "value_size": tune.randint(8,64),
+        "key_size": tune.randint(8, 64),
+        "value_size": tune.randint(8, 64),
         "dropout_rate": tune.uniform(0.1, 0.2),
-        "num_encoder_layers": tune.randint(2,5),
-        "num_decoder_layers": tune.randint(2,5),
-        "out_size": tune.randint(64,512),
-        "feedforward_size": tune.randint(54,512),
-        "num_heads": tune.randint(2,16),
-        "num_memory_slots": tune.randint(4,20),
-        "batch_size": tune.randint(8,64),
+        "num_encoder_layers": tune.randint(2, 5),
+        "num_decoder_layers": tune.randint(2, 5),
+        "out_size": tune.choice([2**x for x in range(7, 9)]),
+        "feedforward_size": tune.choice([2**x for x in range(6, 9)]),
+        "num_heads": tune.choice([2**x for x in range(1, 4)]),
+        "num_memory_slots": tune.randint(4, 20),
+        "batch_size": tune.randint(8, 64),
+        "learning_rate": tune.loguniform(1e-4, 1e-2),
     }
     asha_scheduler = tune.schedulers.ASHAScheduler(
-        time_attr='training_iteration',
-        metric='meteor',
-        mode='max',
+        time_attr="training_iteration",
+        metric="meteor",
+        mode="max",
         max_t=100,
-        grace_period=10,
-        reduction_factor=3,
-        brackets=1
+        grace_period=1,
+        reduction_factor=2,
     )
+    xe_opt = tune.with_parameters(xe_parameter_optimization, **constant_configs)
     analysis = tune.run(
-        xe_parameter_optimization,
+        xe_opt,
+        resources_per_trial={"cpu": 10, "gpu": 1},
         config=config,
         num_samples=100,
-        resources_per_trial={"cpu":5, "gpu":0.5},
         scheduler=asha_scheduler,
-        name="xe_param_opt"
+        name="xe_param_opt",
+        trial_dirname_creator=trial_name_generator
     )
     print(f"Best result: {analysis.best_result}")
     print(f"Best configuration: {analysis.best_config}")
+
 
 if __name__ == "__main__":
     main()

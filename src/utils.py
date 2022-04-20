@@ -19,6 +19,7 @@ from multiprocessing import Pool, cpu_count
 from twilio.rest import Client
 import warnings
 
+
 class AverageMeter(object):
     """Simple class to compute a running average of some tracked value and can be printed"""
 
@@ -31,16 +32,19 @@ class AverageMeter(object):
         if self._count == 0:
             return 0
         return self._sum / self._count
+
     def reset(self):
         self._sum = 0
         self._count = 0
+
     def update(self, x: float) -> typing.NoReturn:
         self._sum += x
         self._count += 1
 
     def __str__(self) -> str:
         return f"{self._name}: {self.get_average():.4f}"
-    
+
+
 class EarlyStopping(object):
     def __init__(
         self,
@@ -74,10 +78,12 @@ class EarlyStopping(object):
             self.best_metric = metric
             torch.save(state, self.checkpoint)
             self.counter = 0
-            
+
+
 class NLPMetricAggregator(object):
     """Class for aggregating caption hypotheses and generating NLP metrics"""
-    def __init__(self, inv_word_map:dict, vocab_size:int=2004) -> None:
+
+    def __init__(self, inv_word_map: dict, vocab_size: int = 2004) -> None:
         self.inv_word_map = inv_word_map
         self.vocab_size = vocab_size
         self.meteor_score_tracker = []
@@ -88,9 +94,9 @@ class NLPMetricAggregator(object):
         self.rouge = ROUGEScore()
         self.meteor_meter = AverageMeter()
         self.reset()
-    
-    def convert_tokens_to_string(self, caption:list) -> str:
-        #return " ".join( [self.inv_word_map[tok] for tok in caption if self.inv_word_map[tok] not in ["<pad>", "<start>"] ]).strip()
+
+    def convert_tokens_to_string(self, caption: list) -> str:
+        # return " ".join( [self.inv_word_map[tok] for tok in caption if self.inv_word_map[tok] not in ["<pad>", "<start>"] ]).strip()
         # There are some tokens that are outside of the vocab in the test set
         # This is just here to rectify that (idk how to do it with the previous syntax)
         acc = ""
@@ -105,8 +111,8 @@ class NLPMetricAggregator(object):
                 acc += " " + self.inv_word_map[tok]
         acc = acc.strip()
         return acc
-    
-    def update(self, predicted: list, reference: list, img_id:str=None):
+
+    def update(self, predicted: list, reference: list, img_id: str = None):
         """Store predictions and references"""
         predicted = self.convert_tokens_to_string(predicted)
         reference = [self.convert_tokens_to_string(ref) for ref in reference]
@@ -114,10 +120,10 @@ class NLPMetricAggregator(object):
         meteor = meteor_score([word_tokenize(r) for r in reference], word_tokenize(predicted))
         self.meteor_meter.update(meteor)
         if img_id is not None:
-            self.meteor_score_tracker.append( (img_id, meteor, predicted, reference) )
+            self.meteor_score_tracker.append((img_id, meteor, predicted, reference))
         self._predicted_captions.append(predicted)
         self._reference_captions.append(reference)
-    
+
     def reset(self):
         self._predicted_captions = []
         self._reference_captions = []
@@ -128,12 +134,11 @@ class NLPMetricAggregator(object):
         self.bleu4.reset()
         self.rouge.reset()
         self.meteor_meter.reset()
-        
+
     def get_individual_scores(self):
-        """Scores individual captions by bleu4 score
-        """
+        """Scores individual captions by bleu4 score"""
         return self.meteor_score_tracker
-    
+
     def generate_metric_summaries(self):
         """Retrieves NLP metrics
         Returns:
@@ -144,10 +149,12 @@ class NLPMetricAggregator(object):
             warnings.simplefilter("ignore")
             with Pool(cpu_count()) as pool:
                 jobs = {}
-                
-                for i in range(1,5):
-                    jobs[f"bleu{i}"] = pool.apply_async(bleu_score, args=(self._predicted_captions, self._reference_captions, i))
-                rougejob = pool.apply_async( rouge_score, args=(self._predicted_captions, self._reference_captions))
+
+                for i in range(1, 5):
+                    jobs[f"bleu{i}"] = pool.apply_async(
+                        bleu_score, args=(self._predicted_captions, self._reference_captions, i)
+                    )
+                rougejob = pool.apply_async(rouge_score, args=(self._predicted_captions, self._reference_captions))
                 for name, jib in jobs.items():
                     jib.wait()
                     results.update({name: jib.get()})
@@ -156,17 +163,26 @@ class NLPMetricAggregator(object):
             results.update({"meteor": self.meteor_meter.get_average()})
         return results
 
+
 class Flickr30KMetricsCallback(Callback):
-    def __init__(self, inv_word_map:dict, caption_reference:dict, sequence_len:int = 30):
+    def __init__(self, inv_word_map: dict, caption_reference: dict, sequence_len: int = 30):
         self.tracker = NLPMetricAggregator(inv_word_map, len(inv_word_map))
         self.tracker.reset()
         self.caption_refs = caption_reference
         self.seq_len = sequence_len
-    
-    def on_validation_batch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule, outputs: Optional[STEP_OUTPUT], batch: Any, batch_idx: int, dataloader_idx: int) -> None:
+
+    def on_validation_batch_end(
+        self,
+        trainer: pl.Trainer,
+        pl_module: pl.LightningModule,
+        outputs: Optional[STEP_OUTPUT],
+        batch: Any,
+        batch_idx: int,
+        dataloader_idx: int,
+    ) -> None:
         _, _, img_ids = batch
         batch_predictions = outputs["val_batch_preds"]
-        pred_caps = torch.argmax(batch_predictions, dim=-1) # get token predictions
+        pred_caps = torch.argmax(batch_predictions, dim=-1)  # get token predictions
         pred_caps = pred_caps.unsqueeze(0).view(-1, self.seq_len - 1)
         for pred, id in zip(pred_caps.tolist(), img_ids):
             ref_caps = self.caption_refs[id]
@@ -178,8 +194,16 @@ class Flickr30KMetricsCallback(Callback):
         self.tracker.reset()
         for metric, value in metrics.items():
             pl_module.log(metric, value)
-            
-    def on_test_batch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule, outputs: Optional[STEP_OUTPUT], batch: Any, batch_idx: int, dataloader_idx: int) -> None:
+
+    def on_test_batch_end(
+        self,
+        trainer: pl.Trainer,
+        pl_module: pl.LightningModule,
+        outputs: Optional[STEP_OUTPUT],
+        batch: Any,
+        batch_idx: int,
+        dataloader_idx: int,
+    ) -> None:
         if outputs is None:
             return
         _, _, img_ids = batch
@@ -187,8 +211,8 @@ class Flickr30KMetricsCallback(Callback):
         ids = outputs["test_image_ids"]
         for pred, id in zip([pred_caps.tolist()], img_ids):
             ref_caps = self.caption_refs[id]
-            self.tracker.update(pred, ref_caps, ids)   
-            
+            self.tracker.update(pred, ref_caps, ids)
+
     def on_test_epoch_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
         metrics = self.tracker.generate_metric_summaries()
         pl_module.current_epoch_language_metrics = metrics
@@ -198,13 +222,14 @@ class Flickr30KMetricsCallback(Callback):
         scores.sort(key=lambda x: x[1], reverse=True)
         print(scores[:5])
 
+
 class TextMessageUpdateCallback(Callback):
-    def __init__(self, sid:str, auth:str, sms_dest:str) -> None:
+    def __init__(self, sid: str, auth: str, sms_dest: str) -> None:
         self.sid = sid
         self.auth = auth
         self.dest = sms_dest
         self.client = Client(sid, auth)
-    
+
     def on_validation_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
         metrics = pl_module.current_epoch_language_metrics
         bleu4 = metrics["bleu4"]
@@ -212,8 +237,9 @@ class TextMessageUpdateCallback(Callback):
         self.client.messages.create(
             body=f"Epoch: {pl_module.current_epoch}\nbleu4:{bleu4:.4f}\nrougeL:{rouge:.4f}",
             from_="+13344534283",
-            to=self.dest
+            to=self.dest,
         )
+
     def on_test_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
         metrics = pl_module.current_epoch_language_metrics
         model_version = pl_module._version
@@ -222,8 +248,9 @@ class TextMessageUpdateCallback(Callback):
         self.client.messages.create(
             body=f"Test Results from version {model_version}\nbleu4:{bleu4:.4f}\nrougeL:{rouge:.4f}",
             from_="+13344534283",
-            to=self.dest
+            to=self.dest,
         )
+
 
 def calc_time(t: float) -> str:
     hours = int(t) // 3600

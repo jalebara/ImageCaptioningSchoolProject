@@ -127,7 +127,7 @@ class Attention(nn.Module):
     def process_masks_and_weights(
         self,
         attention: torch.Tensor,
-        num_keys:int,
+        num_keys: int,
         attention_mask: Optional[torch.Tensor] = None,
         attention_weights: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
@@ -253,7 +253,7 @@ class AttentionWithMemory(Attention):
     def process_masks_and_weights(
         self,
         attention: torch.Tensor,
-        num_keys:int,
+        num_keys: int,
         attention_mask: Optional[torch.Tensor] = None,
         attention_weights: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
@@ -273,9 +273,7 @@ class AttentionWithMemory(Attention):
                 [attention[:, :, :, : self.key_size] * attention_weights, attention[:, :, :, self.key_size :]], -1
             )
         if attention_mask is not None:
-            attention[:, :, :, :num_keys] = attention[:, :, :, :num_keys].masked_fill(
-                attention_mask, -np.inf
-            )
+            attention[:, :, :, :num_keys] = attention[:, :, :, :num_keys].masked_fill(attention_mask, -np.inf)
         return attention
 
 

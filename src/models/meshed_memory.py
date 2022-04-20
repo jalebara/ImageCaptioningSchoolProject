@@ -41,7 +41,7 @@ class PWFeedForward(nn.Module):
         self.relu = nn.ReLU()
         self.layer_norm = nn.LayerNorm(att_size)
         self.dropout = nn.Dropout(dropout_rate)
-        
+
         nn.init.xavier_uniform_(self.affine_inner.weight)
         nn.init.xavier_uniform_(self.affine_outer.weight)
 
@@ -159,10 +159,9 @@ class MeshedMemoryEncoder(nn.Module):
         self.dropout = nn.Dropout(dropout_rate)
         self.relu = nn.ReLU()
         self.layer_norm = nn.LayerNorm(out_size)
-        
+
         # initialization
         nn.init.xavier_uniform_(self.input_project.weight)
-
 
     def forward(self, x, attention_weights: Optional[torch.Tensor] = None):
 
@@ -221,7 +220,7 @@ class DecoderLayer(nn.Module):
         """
         super().__init__()
         self.num_encoder_layers = num_encoder_layers
-        
+
         # Self Attention Layer
         self.self_attention = AttentionLayer(
             out_size=out_size, key_size=key_size, value_size=value_size, num_heads=num_heads, dropout=dropout_rate
@@ -296,7 +295,7 @@ class Decoder(nn.Module):
         self.num_layers = num_layers
         self.encoded_size = encoded_size
         self.vocab_embedding = nn.Embedding(vocab_size, out_size, padding_idx=pad_token)
-        
+
         # From Attention is All You Need, we need to compute sinusoidal embeddings to encode the
         # position of the tokens.
         p = torch.arange(max_sequence_len + 1, dtype=torch.float32).view(-1, 1)
@@ -346,7 +345,7 @@ class Decoder(nn.Module):
         pos = pos.masked_fill(masks.squeeze(-1) == 0, 0).to(y.device)
         vocab_embedding = self.vocab_embedding(y)
         pos_embedding = self.position_embedding(pos)
-        out =  vocab_embedding + pos_embedding
+        out = vocab_embedding + pos_embedding
         for decode in self.decoder_layers:
             out = decode(out, encoded, masks, self_attention_mask, encoder_mask)
         out = self.output(out)
@@ -354,7 +353,9 @@ class Decoder(nn.Module):
 
 
 class MeshedMemoryTransformer(pl.LightningModule):
-    def __init__(self, config:Configuration, beam_size=5, inv_word_map: dict=None, reference_captions: dict=None) -> None:
+    def __init__(
+        self, config: Configuration, beam_size=5, inv_word_map: dict = None, reference_captions: dict = None
+    ) -> None:
         self.comp_device = "cuda" if torch.cuda.is_available() else "cpu"
         super().__init__()
         # Test params/stuff
@@ -369,7 +370,10 @@ class MeshedMemoryTransformer(pl.LightningModule):
         self.start_token = config["start_token"]
         self.pad_token = config["pad_token"]
         self.vocab_size = config["vocabulary_size"]
-        self.example_input_array = (torch.randn(1,50,1024).to(self.comp_device), torch.randint(0,1504, (1,30)).to(self.comp_device))
+        self.example_input_array = (
+            torch.randn(1, 50, 1024).to(self.comp_device),
+            torch.randint(0, 1504, (1, 30)).to(self.comp_device),
+        )
         # Construct Encoder
         self.encoder = MeshedMemoryEncoder(
             in_size=config["data_size"],
@@ -380,10 +384,10 @@ class MeshedMemoryTransformer(pl.LightningModule):
             num_heads=config["num_heads"],
             dropout_rate=config["dropout_rate"],
             feedforward_size=config["feedforward_size"],
-            num_mem_slots=config["num_memory_slots"]
+            num_mem_slots=config["num_memory_slots"],
         )
-        
-        #Construct Decoder
+
+        # Construct Decoder
         self.decoder = Decoder(
             num_encoder_layers=config["num_encoder_layers"],
             num_layers=config["num_decoder_layers"],
@@ -401,7 +405,7 @@ class MeshedMemoryTransformer(pl.LightningModule):
         for p in self.parameters():
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
-        
+
     def forward(self, data, captions):
         encoded, masks = self.encoder(data)
         out = self.decoder(captions, encoded, masks)
@@ -411,8 +415,8 @@ class MeshedMemoryTransformer(pl.LightningModule):
         optimizer = optim.Adam(self.parameters(), lr=self.lr)
         lr_scheduler = LinearWarmupCosineAnnealingLR(optimizer, 10000, 117659)
 
-        return {"optimizer":optimizer, "lr_scheduler":lr_scheduler}
-    
+        return {"optimizer": optimizer, "lr_scheduler": lr_scheduler}
+
     def training_step(self, batch, batch_idx):
         self.lr_schedulers().step()
         inputs, captions, _ = batch
@@ -425,19 +429,19 @@ class MeshedMemoryTransformer(pl.LightningModule):
         loss = self.loss_func(out, y, ignore_index=self.pad_token)
         self.log("train_loss", loss.detach(), batch_size=self.batch_size)
         tqdm_dict = {"train_loss": loss.detach()}
-        output = OrderedDict({"loss": loss, "progress_bar":tqdm_dict, "log":tqdm_dict})
+        output = OrderedDict({"loss": loss, "progress_bar": tqdm_dict, "log": tqdm_dict})
         return output
-    
+
     def on_train_start(self) -> None:
         self.logger.experiment.add_graph(self, self.example_input_array)
-        
+
     def on_train_batch_end(self, outputs: STEP_OUTPUT, batch: Any, batch_idx: int, unused: Optional[int] = 0) -> None:
         self.lr_schedulers().step()
-        
+
     def validation_step(self, batch, batch_idx):
         inputs, caption, _ = batch
         out = self(inputs, caption)
-        
+
         # remove start token for backpropagation
         y = caption[:, 1:].contiguous()
         y = y.view(-1)
@@ -446,7 +450,7 @@ class MeshedMemoryTransformer(pl.LightningModule):
         loss = self.loss_func(out, y, ignore_index=self.pad_token)
         tqdm_dict = {"val_loss": loss.detach()}
         self.log("val_loss", loss.detach(), prog_bar=True, on_epoch=True, logger=True, batch_size=self.batch_size)
-        output = OrderedDict({"val_loss": loss, "progress_bar":tqdm_dict, "log":tqdm_dict, "val_batch_preds":out})
+        output = OrderedDict({"val_loss": loss, "progress_bar": tqdm_dict, "log": tqdm_dict, "val_batch_preds": out})
         return output
 
     # Searches for best sequence with beam search, by default beam_size=5
@@ -460,8 +464,8 @@ class MeshedMemoryTransformer(pl.LightningModule):
         result = BeamSearch(self, inputs, 5)
         result["test_image_ids"] = filename
         return result
-        
-    
+
+
 class BayesianEncoder(nn.Module):
     def __init__(self) -> None:
         super().__init__()
