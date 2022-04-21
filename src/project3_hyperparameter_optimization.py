@@ -96,7 +96,7 @@ def xe_parameter_optimization(config, **train_params):
             lr_monitor_callback,
         ]
     print("Creating Tune Callback")
-    metrics = {"meteor": "meteor"}
+    metrics = {"meteor": "nlp_metrics/meteor"}
     callbacks.append(TuneReportCheckpointCallback(metrics, on="validation_end"))
     # Plugins
 
@@ -104,11 +104,11 @@ def xe_parameter_optimization(config, **train_params):
     print("Building Trainer")
     trainer = pl.Trainer(
         max_epochs=config["epochs"],
-        accelerator="auto",
+        accelerator="gpu",
         callbacks=callbacks,
         logger=TensorBoardLogger(save_dir=tune.get_trial_dir(), name="", version="."),
         gpus=1,
-        progress_bar_refresh_rate=100,
+        progress_bar_refresh_rate=1000,
     )
     print("Training Model")
     trainer.fit(lightning_model, trainloader, valloader)
@@ -154,6 +154,7 @@ def main():
         max_t=100,
         grace_period=1,
         reduction_factor=2,
+        brackets=3
     )
     xe_opt = tune.with_parameters(xe_parameter_optimization, **constant_configs)
     analysis = tune.run(

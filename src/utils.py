@@ -193,7 +193,7 @@ class Flickr30KMetricsCallback(Callback):
         pl_module.current_epoch_language_metrics = metrics
         self.tracker.reset()
         for metric, value in metrics.items():
-            pl_module.log(metric, value)
+            pl_module.log(f"nlp_metrics/{metric}", value)
 
     def on_test_batch_end(
         self,
