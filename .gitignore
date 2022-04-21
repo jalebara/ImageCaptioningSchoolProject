@@ -14,3 +14,4 @@ runs*/
 .pytest_cache/
 .vscode/
 lightning_logs/
+*.zip

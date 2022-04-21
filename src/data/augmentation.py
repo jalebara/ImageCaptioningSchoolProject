@@ -45,14 +45,15 @@ class Flickr30k(VisionDataset):
         mode: str = "test",
         smoke_test=False,
         fast_test=False,
+        disable_progress_bar=False,
+        num_processes=4,
     ) -> None:
         super(Flickr30k, self).__init__(root, transform=transform, target_transform=target_transform)
         archive = exdir.File(root, mode="r")
         self.valid_ids = archive.attrs["valid_ids"]
         self.archive = archive.require_group(mode)
-        
 
-        data_keys = list( set(self.archive.keys()).intersection(set(self.valid_ids)))
+        data_keys = list(set(self.archive.keys()).intersection(set(self.valid_ids)))
         if smoke_test:
             data_keys = data_keys[:2]
         elif fast_test:
@@ -63,16 +64,16 @@ class Flickr30k(VisionDataset):
         self.lengths = defaultdict(list)
         self.normalize = transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 
-        with Pool(processes=10) as pool:
+        with Pool(processes=num_processes) as pool:
             zx = list(zip([root for _ in range(len(data_keys))], data_keys, [mode for _ in range(len(data_keys))]))
             jobs = [pool.apply_async(func=load_metadata, args=(*argument,)) for argument in zx]
-            for job in tqdm(jobs, desc=f"Loading {mode} data"):
+            for job in tqdm(jobs, desc=f"Loading {mode} data", disable=disable_progress_bar):
                 job.wait()
                 a, l = job.get()
                 self.annotations.update(a)
                 for id, caps in a.items():
                     for cap in caps:
-                        self.ann_list.append( (id, cap) )
+                        self.ann_list.append((id, cap))
                 self.lengths.update(l)
         self.ids = list(sorted(self.annotations.keys()))
         self.word_map = archive.attrs["word_map"].to_dict()
@@ -114,11 +115,13 @@ class Flickr30k(VisionDataset):
 
 
 class Flickr30KFeatures(Flickr30k):
-    def __init__(self, max_detections, feature_mode="global", *args, **kwargs) -> NoReturn:
+    def __init__(self, max_detections, feature_mode="global", lazy_cache=False, *args, **kwargs) -> NoReturn:
         self.max_detect = max_detections
         self.feature_mode = feature_mode
-        super().__init__( *args, **kwargs)
-        
+        self.cache_mode = lazy_cache
+        self.cached = dict()
+        super().__init__(*args, **kwargs)
+
     def __getitem__(self, index: int) -> Tuple[Any, Any]:
         """
         Args:
@@ -128,30 +131,36 @@ class Flickr30KFeatures(Flickr30k):
             tuple: Tuple (features, target). target is a list of captions for the image.
         """
         img_id, target = self.ann_list[index]
+        cached = self.cached.get(img_id, False)
+        if self.cache_mode and self.cached.get(img_id, False):  # Lazy load data
+            features, target = cached
+            return features, target, img_id
 
         # Image
         if self.feature_mode == "region":
             features = np.copy(self.archive[img_id]["region_features"][:])
             if features.shape[0] > self.max_detect:
-                features = features[:self.max_detect, :]
+                features = features[: self.max_detect, :]
             elif features.shape[0] < self.max_detect:
                 diff = self.max_detect - features.shape[0]
-                features = np.concatenate([features, np.zeros( (diff, features.shape[1]) )])
+                features = np.concatenate([features, np.zeros((diff, features.shape[1]))])
         else:
-           features = np.copy(self.archive[img_id]["global_features"][:])[None,:] 
+            features = np.copy(self.archive[img_id]["global_features"][:])[None, :]
 
         features = torch.tensor(features).float()
-        
+
         # Captions
         target = torch.tensor(target).long()
         if self.target_transform is not None:
             target = self.target_transform(target)
-        #all_caps = torch.tensor(np.copy()).long()
-    
+        # all_caps = torch.tensor(np.copy()).long()
+        if self.cache_mode:
+            self.cached[img_id] = (features, target)
         return features, target, img_id
-    
+
     def __len__(self) -> int:
         return len(self.ann_list)
+
 
 class AugmentedFlickrDataset(Flickr30k):
     def __init__(
