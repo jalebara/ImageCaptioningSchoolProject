@@ -34,8 +34,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num_workers", action="store", type=int, default=8)
     return parser.parse_args()
 
+
 def trial_name_generator(trial):
     return f"{str(uuid.uuid4())}"
+
 
 def xe_parameter_optimization(config, **train_params):
     # Load Data
@@ -44,7 +46,7 @@ def xe_parameter_optimization(config, **train_params):
         root=train_params["data_dir"],
         max_detections=train_params["max_detections"],
         smoke_test=train_params["smoke_test"],
-        lazy_cache=True,
+        lazy_cache=False,
         feature_mode="region",
         mode="train",
         disable_progress_bar=True,
@@ -54,17 +56,17 @@ def xe_parameter_optimization(config, **train_params):
         root=train_params["data_dir"],
         max_detections=train_params["max_detections"],
         smoke_test=train_params["smoke_test"],
-        lazy_cache=True,
+        lazy_cache=False,
         feature_mode="region",
         mode="valid",
         disable_progress_bar=True,
-        num_processes=10
+        num_processes=10,
     )
     print("Configuring Dataloaders")
     trainloader = DataLoader(train, batch_size=config["batch_size"], num_workers=train_params["num_data_workers"])
     valloader = DataLoader(valid, batch_size=config["batch_size"], num_workers=train_params["num_data_workers"])
     config.update(train_params)
-    
+
     print("Constructing Model")
     # Load Model
     config = TransformerConfiguration(config)
@@ -131,7 +133,7 @@ def main():
         "end_token": 1,
         "start_token": 3,
         "max_detections": 50,
-        "num_data_workers": 10
+        "num_data_workers": 10,
     }
     config = {
         # parameters to vary
@@ -154,7 +156,7 @@ def main():
         max_t=100,
         grace_period=1,
         reduction_factor=2,
-        brackets=3
+        brackets=3,
     )
     xe_opt = tune.with_parameters(xe_parameter_optimization, **constant_configs)
     analysis = tune.run(
@@ -164,7 +166,7 @@ def main():
         num_samples=100,
         scheduler=asha_scheduler,
         name="xe_param_opt",
-        trial_dirname_creator=trial_name_generator
+        trial_dirname_creator=trial_name_generator,
     )
     print(f"Best result: {analysis.best_result}")
     print(f"Best configuration: {analysis.best_config}")
