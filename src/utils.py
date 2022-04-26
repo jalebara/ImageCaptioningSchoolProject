@@ -227,6 +227,7 @@ class KLAnnealingCallback(Callback):
         self.epochs = epochs
     def on_train_epoch_start(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
         pl_module.lam = (1 - np.exp( trainer.current_epoch / self.epochs))
+        pl_module.log("train_params/lambda", pl_module.lam)
 
 class TextMessageUpdateCallback(Callback):
     def __init__(self, sid: str, auth: str, sms_dest: str) -> None:
