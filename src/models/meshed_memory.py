@@ -15,6 +15,7 @@ import numpy as np
 from typing import Optional, NoReturn, OrderedDict
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 import torch
 
 from .attention import AttentionLayer  # scaled dot product attention
@@ -481,9 +482,7 @@ class MeshedMemoryTransformerSelfCrit(MeshedMemoryTransformer):
         return [self.train_inv_word_map.get(tok, "<unc>") for tok in caption if self.train_inv_word_map.get(tok, "<unc>") not in ["<pad>", "<start>"]]
         
     def training_step(self, batch, batch_idx):
-        torch.autograd.set_detect_anomaly(True)
         # Run through, get results of beam search
-        self.lr_schedulers().step()
         inputs,captions,img_id = batch
         batch_size = inputs.shape[0]
         all_meteorscores = torch.empty([batch_size, 1])
@@ -501,9 +500,9 @@ class MeshedMemoryTransformerSelfCrit(MeshedMemoryTransformer):
         #     all_lengths[i] = int(length[0])
         #     all_meteorscores[i] = meteor(caption_string, best_sequence_string)
         # Softmax to get probs
-        out = nn.functional.softmax(out, dim=2)
-        max_probs,max_words=torch.max(out,dim=2)
-        all_logprobs = torch.sum(torch.log(max_probs), dim=1)
+        pred_seq = nn.functional.softmax(out, dim=-1)
+        max_probs,max_words=torch.max(pred_seq,dim=2)
+
         for i in range(0, batch_size):
             best_sequence_string = self.convert_tokens_to_string(max_words[i,:].tolist())
             all_caps = self.reference_captions[img_id[i]]
@@ -515,9 +514,9 @@ class MeshedMemoryTransformerSelfCrit(MeshedMemoryTransformer):
         y = y.view(-1)
         out = out[:, :-1].contiguous()
         out = out.view(-1, self.vocab_size)
-        reward = all_meteorscores
+        reward = all_meteorscores.to(inputs.device)
         reward_baseline = torch.mean(reward)
-        loss = -torch.mean(all_logprobs * (reward - reward_baseline))
+        loss = -torch.mean(self.loss_func(out, y, ignore_index=self.pad_token) * (reward - reward_baseline))
         self.log("meteor", torch.mean(all_meteorscores))
         self.log("loss", loss)
         output = OrderedDict({"meteor": torch.mean(all_meteorscores), "loss": loss})

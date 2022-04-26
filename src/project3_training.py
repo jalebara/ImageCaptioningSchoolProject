@@ -97,20 +97,10 @@ def main():
 
     # Cross Entropy Training
     trainer = pl.Trainer(
-        max_epochs=config["epochs"], accelerator="auto", fast_dev_run=smoke_test, gpus=0, callbacks=callbacks
+        max_epochs=config["epochs"], accelerator="auto", fast_dev_run=smoke_test, gpus=1, callbacks=callbacks
     )
     trainer.fit(lightning_model, trainloader, valloader)
 
-    # # Testing
-    # test = Flickr30KFeatures(
-    #     root=data_dir,
-    #     max_detections=config["max_detections"],
-    #     feature_mode="region",
-    #     smoke_test=smoke_test or gold_overfit,
-    #     mode="test",
-    # )
-    # testloader = DataLoader(test, batch_size=config["batch_size"], num_workers=10)
-    # trainer.test(testloader)
 
 
 if __name__ == "__main__":
