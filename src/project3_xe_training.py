@@ -75,7 +75,7 @@ def main():
 
     # Model Checkpointing
     checkpoint_callback = pl.callbacks.ModelCheckpoint(
-        monitor="nlp_metrics/meteor", filename="{epoch}-{meteor:.4f}", mode="max"
+        monitor="nlp_metrics/bleu4", filename="{epoch}-{bleu4:.4f}", mode="max"
     )
     lr_monitor_callback = pl.callbacks.LearningRateMonitor()
 
