@@ -304,19 +304,28 @@ class BayesianAttention(Attention):
         self.kl = 0  # we keep track of kl divergence over time
 
         # Contextual Prior
-        self.prior_layer1 = nn.Linear(key_head, kwargs["out_size"])
+        self.prior_layer1 = nn.Linear(kwargs["key_size"], kwargs["out_size"])
         self.relu = nn.LeakyReLU()
         self.prior_layer2 = nn.Linear(kwargs["out_size"], 1)
 
         # Weibull Setup
-        self.alpha_gamma = nn.Parameter(torch.Tensor(1))  # we learn alpha gamma across training
+        self.alpha_gamma = torch.tensor(torch.Tensor(1))  # we learn alpha gamma across training
         self.beta_gamma = torch.tensor(1).type(torch.float32)
         self.k_weibull = torch.tensor(k).type(torch.float32)
         # Initializations
         nn.init.xavier_uniform_(self.prior_layer1.weight)
         nn.init.xavier_uniform_(self.prior_layer2.weight)
 
-    def stochastic_attention(self, attention: torch.Tensor):
+    def compute_prior(self, keys, attention_mask):
+        # Compute Contextual Prior
+        dot_gamma = self.prior_layer2(self.relu(self.prior_layer1(keys.permute(0,1,3,2)))).permute(0,1,3,2)
+        if attention_mask is not None:
+            dot_gamma = dot_gamma.masked_fill(attention_mask, -np.inf)
+        self.prior_att_weights = F.softmax(dot_gamma, dim=-1)
+        self.alpha_gamma = self.prior_att_weights * self.beta_gamma
+        
+    def stochastic_attention(self, attention: torch.Tensor, keys:torch.Tensor):
+        # Compute Weibull Likelihood
         logprobs = torch.log(F.softmax(attention, dim=-1) + eps)
 
         unif = torch.rand_like(logprobs)
@@ -367,7 +376,8 @@ class BayesianAttention(Attention):
         # Pass in information from previous layers
         attention = self.process_masks_and_weights(attention, num_keys, attention_mask, attention_weights)
         if self.training:
-            attention = self.stochastic_attention(attention)
+            self.compute_prior(keys, attention_mask)
+            attention = self.stochastic_attention(attention, keys)
         else:
             # deterministic attention computation
             attention = torch.softmax(attention, dim=-1)

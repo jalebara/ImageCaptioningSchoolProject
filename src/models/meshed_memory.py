@@ -453,7 +453,7 @@ class MeshedMemoryTransformer(pl.LightningModule):
 
     def configure_optimizers(self):
         optimizer = optim.Adam(self.parameters(), lr=self.lr)
-        lr_scheduler = LinearWarmupCosineAnnealingLR(optimizer, 10000, 117659//4)
+        lr_scheduler = LinearWarmupCosineAnnealingLR(optimizer, 10000, 117659)
 
         return {"optimizer": optimizer, "lr_scheduler": lr_scheduler}
 
@@ -467,19 +467,16 @@ class MeshedMemoryTransformer(pl.LightningModule):
         out = out[:, :-1].contiguous()
         out = out.view(-1, self.vocab_size)
         loss = self.loss_func(out, y, ignore_index=self.pad_token)
-        
         if self.bayesian:
-            self.log("train/base_loss")
             KL = 0
             count= 0
             for kl in self.kl:
                 count+=1
                 KL += kl
             KL = KL / count
-            self.log("train/KL")
             loss += self.lam * KL
         self.log("train_loss", loss.detach(), batch_size=self.batch_size)
-        tqdm_dict = {"loss": loss.detach(), "kl_loss": KL * self.lam}
+        tqdm_dict = {"train_loss": loss.detach()}
         output = OrderedDict({"loss": loss, "progress_bar": tqdm_dict, "log": tqdm_dict})
         return output
 
