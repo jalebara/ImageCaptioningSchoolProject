@@ -222,6 +222,11 @@ class Flickr30KMetricsCallback(Callback):
         scores.sort(key=lambda x: x[1], reverse=True)
         print(scores[:5])
 
+class KLAnnealingCallback(Callback):
+    def __init__(self, epochs):
+        self.epochs = epochs
+    def on_train_epoch_start(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
+        pl_module.lam = (1 - np.exp( trainer.current_epoch / self.epochs))
 
 class TextMessageUpdateCallback(Callback):
     def __init__(self, sid: str, auth: str, sms_dest: str) -> None:

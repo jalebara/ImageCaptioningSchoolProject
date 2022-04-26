@@ -74,7 +74,9 @@ def xe_parameter_optimization(config, **train_params):
 
     print("Constructing Callbacks")
     # Model Checkpointing
-    checkpoint_callback = pl.callbacks.ModelCheckpoint(monitor="bleu4", filename="{epoch}-{bleu4:.4f}", mode="max")
+    checkpoint_callback = pl.callbacks.ModelCheckpoint(
+        monitor="nlp_metrics/bleu4", filename="{epoch}-{bleu4:.4f}", mode="max"
+    )
     lr_monitor_callback = pl.callbacks.LearningRateMonitor()
 
     # Language Metric Aggregation
@@ -125,6 +127,7 @@ def main():
         # Testing vars
         "smoke_test": smoke_test,
         # Constant across runs
+        "epochs": 30,
         "data_dir": data_dir,
         "vocabulary_size": 2004,
         "pad_token": 0,
@@ -154,8 +157,8 @@ def main():
         metric="meteor",
         mode="max",
         max_t=100,
-        grace_period=1,
-        reduction_factor=2,
+        grace_period=3,
+        reduction_factor=3,
         brackets=3,
     )
     xe_opt = tune.with_parameters(xe_parameter_optimization, **constant_configs)

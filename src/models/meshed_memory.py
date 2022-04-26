@@ -63,7 +63,9 @@ class EncoderLayer(nn.Module):
         dropout_rate: float,
         feedforward_size: int,
         num_mem_slots: Optional[int] = None,
+        bayesian: bool = False,
         pad_token: int = 0,
+        k:Optional[float] = None,
     ) -> NoReturn:
         """Implements a single encoding layer for the transformer as defined in the Meshed Memory paper
 
@@ -89,7 +91,11 @@ class EncoderLayer(nn.Module):
             dropout=dropout_rate,
             num_heads=num_heads,
             num_memory_slots=num_mem_slots,
+            bayesian=bayesian,
+            k=k,
         )
+        self.bayesian = bayesian
+        self.kl_inner = 0
         self.pw_feedforward = PWFeedForward(
             att_size=out_size, feedforward_size=feedforward_size, dropout_rate=dropout_rate
         )
@@ -109,6 +115,8 @@ class EncoderLayer(nn.Module):
             attention_mask=attention_mask,
             attention_weights=attention_weights,
         )
+        if self.bayesian:
+            self.kl = self.attention.kl
         x = self.pw_feedforward(x)
         return x
 
@@ -126,6 +134,8 @@ class MeshedMemoryEncoder(nn.Module):
         feedforward_size: int,
         num_mem_slots: Optional[int] = None,
         pad_token: int = 0,
+        bayesian:bool = False,
+        k:Optional[float] = None
     ) -> NoReturn:
         """Generates all of the encoder layers and adds additional layer norms before the encoder layer
 
@@ -151,6 +161,8 @@ class MeshedMemoryEncoder(nn.Module):
                     dropout_rate=dropout_rate,
                     feedforward_size=feedforward_size,
                     num_mem_slots=num_mem_slots,
+                    bayesian=bayesian,
+                    k = k
                 )
                 for _ in range(num_layers)
             ]
@@ -175,10 +187,13 @@ class MeshedMemoryEncoder(nn.Module):
             (torch.sum(x, -1) == self.pad_token).unsqueeze(1).unsqueeze(1)
         )  # mask over sequence (batch_size, 1 , 1 , sequence_length)
         encoded_output = []
+        if self.training:
+            self.kl = []
         for enc_layer in self.encoder_layers:
             x = enc_layer(keys=x, queries=x, values=x, attention_mask=mask, attention_weights=attention_weights)
             encoded_output.append(x.unsqueeze(1))
-
+            if self.training:
+                self.kl.append(enc_layer.kl)
         # (batch_size, num_layers, seq_len, input_size)
         encoded_output = torch.cat(encoded_output, axis=1)
         return encoded_output, mask
@@ -206,6 +221,8 @@ class DecoderLayer(nn.Module):
         feedforward_size: int,
         num_heads: int,
         dropout_rate: float,
+        bayesian:bool=False,
+        k:Optional[float] = None
     ):
         """Implements a single Decoder layer for a meshed memory transformer
 
@@ -223,12 +240,12 @@ class DecoderLayer(nn.Module):
 
         # Self Attention Layer
         self.self_attention = AttentionLayer(
-            out_size=out_size, key_size=key_size, value_size=value_size, num_heads=num_heads, dropout=dropout_rate
+            k=k, out_size=out_size, key_size=key_size, value_size=value_size, num_heads=num_heads, dropout=dropout_rate, bayesian=bayesian
         )
 
         # Cross Attention Layer
         self.cross_attention = AttentionLayer(
-            out_size=out_size, key_size=key_size, value_size=value_size, num_heads=num_heads
+            k=k, out_size=out_size, key_size=key_size, value_size=value_size, num_heads=num_heads, bayesian=bayesian
         )
 
         # Encode position into data
@@ -252,20 +269,26 @@ class DecoderLayer(nn.Module):
         self_attention_mask: torch.Tensor,
         cross_attention_mask: torch.Tensor,
     ) -> torch.Tensor:
+        self.kl = []
         self_attention = self.self_attention(x, x, x, self_attention_mask) * mask_pad
-
+        if self.training:
+            self.kl.append(self.self_attention.kl)
         out = None
         for i in range(self.num_encoder_layers):
             if i == 0:
                 cross = self.cross_attention(
                     self_attention, encoder_output[:, i], encoder_output[:, i], cross_attention_mask
                 )
+                if self.training:
+                    self.kl.append(self.cross_attention.kl)
                 linear = self.sigmoid(self.fully_connected[i](torch.cat([self_attention, cross], -1)))
                 out = cross * linear
             else:
                 cross = self.cross_attention(
                     self_attention, encoder_output[:, i], encoder_output[:, i], cross_attention_mask
                 )
+                if self.training:
+                    self.kl.append(self.cross_attention.kl)
                 linear = self.sigmoid(self.fully_connected[i](torch.cat([self_attention, cross], -1)))
                 out = out + cross * linear
         out = (out / np.sqrt(self.num_encoder_layers)) * mask_pad
@@ -288,6 +311,8 @@ class Decoder(nn.Module):
         vocab_size: int,
         num_heads: int,
         dropout_rate: float,
+        bayesian:bool,
+        k:Optional[float] = None,
     ) -> None:
         super().__init__()
         self.max_seq_len = max_sequence_len
@@ -320,6 +345,8 @@ class Decoder(nn.Module):
                     feedforward_size=feedforward_size,
                     num_heads=num_heads,
                     dropout_rate=dropout_rate,
+                    bayesian=bayesian,
+                    k=k,
                 )
                 for _ in range(num_layers)
             ]
@@ -346,20 +373,23 @@ class Decoder(nn.Module):
         vocab_embedding = self.vocab_embedding(y)
         pos_embedding = self.position_embedding(pos)
         out = vocab_embedding + pos_embedding
+        self.kl = []
         for decode in self.decoder_layers:
             out = decode(out, encoded, masks, self_attention_mask, encoder_mask)
+            if self.training:
+                self.kl.extend(decode.kl)
         out = self.output(out)
         return out
 
 
 class MeshedMemoryTransformer(pl.LightningModule):
     def __init__(
-        self, config: Configuration, beam_size=5, inv_word_map: dict = None, reference_captions: dict = None
-    ) -> None:
+        self, config: Configuration, beam_size=5, inv_word_map: dict = None, reference_captions: dict = None) -> None:
         self.comp_device = "cuda" if torch.cuda.is_available() else "cpu"
         super().__init__()
         # Test params/stuff
         self.beam_size = beam_size
+        self.bayesian = config["bayesian"]
         self.max_sequence_length = config["max_sequence_length"]
         self.previous_image = ""
         # Training Params
@@ -385,6 +415,8 @@ class MeshedMemoryTransformer(pl.LightningModule):
             dropout_rate=config["dropout_rate"],
             feedforward_size=config["feedforward_size"],
             num_mem_slots=config["num_memory_slots"],
+            bayesian=config["bayesian"],
+            k=config["k"],
         )
 
         # Construct Decoder
@@ -401,14 +433,22 @@ class MeshedMemoryTransformer(pl.LightningModule):
             vocab_size=config["vocabulary_size"],
             num_heads=config["num_heads"],
             dropout_rate=config["dropout_rate"],
+            bayesian=config["bayesian"],
+            k=config["k"]
         )
+        
+        self.lam = 0.0
         for p in self.parameters():
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
     def forward(self, data, captions):
+        self.kl = []
         encoded, masks = self.encoder(data)
         out = self.decoder(captions, encoded, masks)
+        if self.training:
+            self.kl.extend(self.encoder.kl)
+            self.kl.extend(self.decoder.kl)
         return out
 
     def configure_optimizers(self):
@@ -427,6 +467,14 @@ class MeshedMemoryTransformer(pl.LightningModule):
         out = out[:, :-1].contiguous()
         out = out.view(-1, self.vocab_size)
         loss = self.loss_func(out, y, ignore_index=self.pad_token)
+        if self.bayesian:
+            KL = 0
+            count= 0
+            for kl in self.kl:
+                count+=1
+                KL += kl
+            KL = KL / count
+            loss += self.lam * KL
         self.log("train_loss", loss.detach(), batch_size=self.batch_size)
         tqdm_dict = {"train_loss": loss.detach()}
         output = OrderedDict({"loss": loss, "progress_bar": tqdm_dict, "log": tqdm_dict})
@@ -464,21 +512,3 @@ class MeshedMemoryTransformer(pl.LightningModule):
         result = BeamSearch(self, inputs, 5)
         result["test_image_ids"] = filename
         return result
-
-
-class BayesianEncoder(nn.Module):
-    def __init__(self) -> None:
-        super().__init__()
-        raise NotImplementedError
-
-
-class BayesianDecoder(nn.Module):
-    def __init__(self) -> None:
-        super().__init__()
-        raise NotImplementedError
-
-
-class BayesianMeshedMemoryTransformer(nn.Module):
-    def __init__(self) -> None:
-        super().__init__()
-        raise NotImplementedError

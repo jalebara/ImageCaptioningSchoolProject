@@ -18,6 +18,9 @@ import math
 import numpy as np
 
 
+eps = 1e-20
+
+
 class SATAttention(nn.Module):
     def __init__(self, encoder_size: int, hidden_size: int, attention_size: int) -> None:
         super().__init__()
@@ -277,6 +280,115 @@ class AttentionWithMemory(Attention):
         return attention
 
 
+class BayesianAttention(Attention):
+    def __init__(self, k: float, *args, **kwargs) -> None:
+        """This class implements soft probabilistic attention by imposing a reparametrized
+        Weibull distribution on the weights of the attention and inducing a prior from the keys.
+        We accomplish this by building on top of the standard Scaled Dot Product Attention.
+
+        For scaled dot product attention, the attention weights are defined by
+
+        .. math::
+            W_{ij} = \\frac{\\exp{\\left( \\Phi_{ij} \\right)}}{\\sum_{j'=1}^{n} \\exp{\\left( \\Phi_{ij'}\\right)} }
+
+        The Weibull Distribution is defined by the following:
+
+        .. math::
+            Pr(S | k, \\lambda) =
+
+        Args:
+            k (float): k is the shape parameter of the Weibull Distribution
+        """
+        super().__init__(*args, **kwargs)
+        key_head = kwargs["key_size"] * kwargs["num_heads"]
+        self.kl = 0  # we keep track of kl divergence over time
+
+        # Contextual Prior
+        self.prior_layer1 = nn.Linear(key_head, kwargs["out_size"])
+        self.relu = nn.LeakyReLU()
+        self.prior_layer2 = nn.Linear(kwargs["out_size"], 1)
+
+        # Weibull Setup
+        self.alpha_gamma = nn.Parameter(torch.Tensor(1))  # we learn alpha gamma across training
+        self.beta_gamma = torch.tensor(1).type(torch.float32)
+        self.k_weibull = torch.tensor(k).type(torch.float32)
+        # Initializations
+        nn.init.xavier_uniform_(self.prior_layer1.weight)
+        nn.init.xavier_uniform_(self.prior_layer2.weight)
+
+    def stochastic_attention(self, attention: torch.Tensor):
+        logprobs = torch.log(F.softmax(attention, dim=-1) + eps)
+
+        unif = torch.rand_like(logprobs)
+        attention = F.softmax(
+            logprobs - torch.lgamma(1 + 1.0 / self.k_weibull + 1.0 / self.k_weibull * torch.log(-torch.log(1.0 - unif + eps) + eps)),
+            dim=-1,
+        )
+        # Compute KL divergence for training
+        
+        kl = -(
+            self.alpha_gamma * (logprobs - torch.lgamma(1 + 1.0 / self.k_weibull))
+            - np.euler_gamma * self.alpha_gamma / self.k_weibull
+            - self.beta_gamma
+            * torch.exp(logprobs - torch.lgamma(1 + 1.0 / self.k_weibull) + torch.lgamma(1 + 1.0 / self.k_weibull))
+            + self.alpha_gamma * torch.log(self.beta_gamma + eps)
+            - torch.lgamma(self.alpha_gamma + eps)
+        )
+        self.kl = kl.mean()
+        return attention
+
+    def forward(
+        self,
+        queries: torch.Tensor,
+        keys: torch.Tensor,
+        values: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        attention_weights: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """_summary_
+
+        Args:
+            queries (torch.Tensor): _description_
+            keys (torch.Tensor): _description_
+            values (torch.Tensor): _description_
+            attention_mask (Optional[torch.Tensor], optional): _description_. Defaults to None.
+            attention_weights (Optional[torch.Tensor], optional): _description_. Defaults to None.
+
+        Returns:
+            torch.Tensor: _description_
+        """
+        num_queries = queries.size(1)
+        num_keys = keys.size(1)
+        batch_size = keys.size(0)
+        queries, keys, values = self.preprocess_inputs(queries=queries, keys=keys, values=values)
+
+        attention = torch.matmul(queries, keys) / self.scale  # alignment matrix
+
+        # Pass in information from previous layers
+        attention = self.process_masks_and_weights(attention, num_keys, attention_mask, attention_weights)
+        if self.training:
+            attention = self.stochastic_attention(attention)
+        else:
+            # deterministic attention computation
+            attention = torch.softmax(attention, dim=-1)
+        output = torch.matmul(attention, values)
+
+        # reshape
+        output = output.permute(0, 2, 1, 3).contiguous().view(batch_size, num_queries, self.num_heads * self.value_size)
+        output = self.output(output)
+        return output
+
+
+class BayesianAttentionWithMemory(AttentionWithMemory, BayesianAttention):
+    def __init__(self, *args, **kwargs):
+        """
+
+        Args:
+            k (float): k is the shape parameter of the Weibull Distribution
+        """
+        super().__init__(*args, **kwargs)
+
+
 class AttentionLayer(nn.Module):
     def __init__(
         self,
@@ -286,6 +398,8 @@ class AttentionLayer(nn.Module):
         num_heads: int,
         dropout: float = 0.5,
         num_memory_slots: Optional[int] = None,
+        bayesian: bool = False,
+        k:Optional[float] = None,
     ) -> NoReturn:
         """Wrapper around the attention module to add the other components in the paper
 
@@ -301,10 +415,21 @@ class AttentionLayer(nn.Module):
             num_memory_slots (Optional[int], optional): number of memory slots to use. Defaults to None.
         """
         super().__init__()
-        if num_memory_slots is not None:
-            self.attention = AttentionWithMemory(out_size, key_size, value_size, num_heads, num_memory_slots)
+        self.bayesian = bayesian
+        if bayesian:
+            if num_memory_slots is not None:
+                self.attention = BayesianAttentionWithMemory(
+                    k=k,out_size=out_size, key_size=key_size, value_size=value_size, num_heads=num_heads, num_mem_slots=num_memory_slots
+                )
+            else:
+                self.attention = BayesianAttention(
+                    k=k, out_size=out_size, key_size=key_size, value_size=value_size, num_heads=num_heads
+                )
         else:
-            self.attention = Attention(out_size, key_size, value_size, num_heads)
+            if num_memory_slots is not None:
+                self.attention = AttentionWithMemory(out_size, key_size, value_size, num_heads, num_memory_slots)
+            else:
+                self.attention = Attention(out_size, key_size, value_size, num_heads)
         self.dropout = nn.Dropout(dropout)
         self.norm = nn.LayerNorm(out_size)
 
@@ -329,26 +454,8 @@ class AttentionLayer(nn.Module):
             torch.Tensor: _description_
         """
         output = self.attention(queries, keys, values, attention_mask, attention_weights)
+        if self.bayesian:
+            self.kl = self.attention.kl
         output = self.dropout(output)
         output = self.norm(output + queries)
         return output
-
-
-class ProbabilisticAttentionWeights(nn.Module):
-    def __init__(self, key_size:int, query_size:int, out_size:int) -> None:
-        super().__init__()
-    
-    def sample_weights(self):
-        pass
-    
-
-class BayesianAttention(Attention):
-    def __init__(self, mode:str="weibull", *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-        raise NotImplementedError
-
-
-class BayesianMultiHeadedAttention(nn.Module):
-    def __init__(self) -> None:
-        super().__init__()
-        raise NotImplementedError
