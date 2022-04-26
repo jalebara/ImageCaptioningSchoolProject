@@ -36,7 +36,7 @@ class Configuration:
                 "embedding_size": 512,
                 "scheduled_sampling_convergence": 0.2,
                 "learning_rate": 1e-3,
-                "epochs": 60,
+                "epochs": 30,
                 "hidden_size": 512,
                 "attention_size": 512,
                 "dropout_rate": 0.75,
