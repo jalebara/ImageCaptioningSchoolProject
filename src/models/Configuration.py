@@ -89,6 +89,7 @@ class TransformerConfiguration(Configuration):
                 "batch_size": 64,
                 "max_detections": 50,
                 "bayesian":False,
+                "k":None,
             }
         else:
             update_dict = config_dict
@@ -217,6 +218,23 @@ class MemoryTinyTransformerConfiguration(TransformerConfiguration):
             update_dict = config_dict
         self.config_dict.update(update_dict)
 
+class MemoryLessTinyTransformerConfiguration(TransformerConfiguration):
+    def __init__(self, config_dict: Optional[dict] = None) -> NoReturn:
+        super().__init__(config_dict)
+        if config_dict is None:
+            update_dict = {
+                "num_encoder_layers": 2,
+                "num_decoder_layers": 2,
+                "key_size": 16,
+                "value_size": 16,
+                "out_size": 128,
+                "feedforward_size": 128,
+                "num_memory_slots": None,
+            }
+        else:
+            update_dict = config_dict
+        self.config_dict.update(update_dict)
+
 class BayesianMemoryLessTinyTransformerConfiguration(TransformerConfiguration):
     def __init__(self, config_dict: Optional[dict] = None) -> NoReturn:
         super().__init__(config_dict)
@@ -229,6 +247,24 @@ class BayesianMemoryLessTinyTransformerConfiguration(TransformerConfiguration):
                 "out_size": 128,
                 "feedforward_size": 128,
                 "num_memory_slots": None,
+                "bayesian":True,
+                "k":0.5,
+            }
+        else:
+            update_dict = config_dict
+        self.config_dict.update(update_dict)
+
+class BayesianMemoryTinyTransformerConfiguration(TransformerConfiguration):
+    def __init__(self, config_dict: Optional[dict] = None) -> NoReturn:
+        super().__init__(config_dict)
+        if config_dict is None:
+            update_dict = {
+                "num_encoder_layers": 2,
+                "num_decoder_layers": 2,
+                "key_size": 16,
+                "value_size": 16,
+                "out_size": 128,
+                "feedforward_size": 128,
                 "bayesian":True,
                 "k":0.5,
             }

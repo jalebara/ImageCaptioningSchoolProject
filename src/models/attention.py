@@ -389,7 +389,7 @@ class BayesianAttention(Attention):
         return output
 
 
-class BayesianAttentionWithMemory(AttentionWithMemory, BayesianAttention):
+class BayesianAttentionWithMemory(BayesianAttention, AttentionWithMemory):
     def __init__(self, *args, **kwargs):
         """
 
@@ -398,6 +398,54 @@ class BayesianAttentionWithMemory(AttentionWithMemory, BayesianAttention):
         """
         super().__init__(*args, **kwargs)
 
+    def compute_prior(self, keys, attention_mask, num_keys:int):
+            # Compute Contextual Prior
+        dot_gamma = self.prior_layer2(self.relu(self.prior_layer1(keys.permute(0,1,3,2)))).permute(0,1,3,2)
+        if attention_mask is not None:
+            dot_gamma[:, :, :, :num_keys] = dot_gamma[:, :, :, :num_keys].masked_fill(attention_mask, -np.inf)
+        self.prior_att_weights = F.softmax(dot_gamma, dim=-1)
+        self.alpha_gamma = self.prior_att_weights * self.beta_gamma
+
+    def forward(
+        self,
+        queries: torch.Tensor,
+        keys: torch.Tensor,
+        values: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        attention_weights: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """_summary_
+
+        Args:
+            queries (torch.Tensor): _description_
+            keys (torch.Tensor): _description_
+            values (torch.Tensor): _description_
+            attention_mask (Optional[torch.Tensor], optional): _description_. Defaults to None.
+            attention_weights (Optional[torch.Tensor], optional): _description_. Defaults to None.
+
+        Returns:
+            torch.Tensor: _description_
+        """
+        num_queries = queries.size(1)
+        num_keys = keys.size(1)
+        batch_size = keys.size(0)
+        queries, keys, values = self.preprocess_inputs(queries=queries, keys=keys, values=values)
+        attention = torch.matmul(queries, keys) / self.scale
+
+        # Pass in information from previous layers
+        attention = self.process_masks_and_weights(attention, num_keys, attention_mask, attention_weights)
+        if self.training:
+            self.compute_prior(keys, attention_mask, num_keys)
+            attention = self.stochastic_attention(attention, keys)
+        else:
+            # deterministic attention computation
+            attention = torch.softmax(attention, dim=-1)
+        output = torch.matmul(attention, values)
+
+        # reshape
+        output = output.permute(0, 2, 1, 3).contiguous().view(batch_size, num_queries, self.num_heads * self.value_size)
+        output = self.output(output)
+        return output
 
 class AttentionLayer(nn.Module):
     def __init__(

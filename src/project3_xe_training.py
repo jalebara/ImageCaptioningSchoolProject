@@ -46,7 +46,7 @@ def main():
     num_workers = args.num_workers
 
     # Load Config
-    config = BayesianMemoryLessTinyTransformerConfiguration()
+    config = BayesianMemoryTinyTransformerConfiguration()
 
     # Load Data
     train = Flickr30KFeatures(

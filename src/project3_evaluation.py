@@ -37,7 +37,7 @@ from pytorch_lightning import LightningDataModule
 
 from data.augmentation import Flickr30KFeatures
 
-from models.Configuration import MediumDroppyTransformerConfiguration
+from models.Configuration import *
 from models.meshed_memory import MeshedMemoryTransformer
 from models.model_utils import count_parameters
 
@@ -61,7 +61,7 @@ def main():
     num_workers = args.num_workers
 
     # Load Config
-    config = MemoryLessTinyTransformerConfiguration()
+    config = BayesianMemoryTinyTransformerConfiguration()
 
     # Load Data
     test = Flickr30KFeatures(

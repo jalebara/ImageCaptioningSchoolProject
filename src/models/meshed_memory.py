@@ -95,7 +95,6 @@ class EncoderLayer(nn.Module):
             k=k,
         )
         self.bayesian = bayesian
-        self.kl_inner = 0
         self.pw_feedforward = PWFeedForward(
             att_size=out_size, feedforward_size=feedforward_size, dropout_rate=dropout_rate
         )
@@ -171,6 +170,7 @@ class MeshedMemoryEncoder(nn.Module):
         self.dropout = nn.Dropout(dropout_rate)
         self.relu = nn.ReLU()
         self.layer_norm = nn.LayerNorm(out_size)
+        self.bayesian = bayesian
 
         # initialization
         nn.init.xavier_uniform_(self.input_project.weight)
@@ -192,7 +192,7 @@ class MeshedMemoryEncoder(nn.Module):
         for enc_layer in self.encoder_layers:
             x = enc_layer(keys=x, queries=x, values=x, attention_mask=mask, attention_weights=attention_weights)
             encoded_output.append(x.unsqueeze(1))
-            if self.training:
+            if self.training and self.bayesian:
                 self.kl.append(enc_layer.kl)
         # (batch_size, num_layers, seq_len, input_size)
         encoded_output = torch.cat(encoded_output, axis=1)
@@ -237,7 +237,7 @@ class DecoderLayer(nn.Module):
         """
         super().__init__()
         self.num_encoder_layers = num_encoder_layers
-
+        self.bayesian = bayesian
         # Self Attention Layer
         self.self_attention = AttentionLayer(
             k=k, out_size=out_size, key_size=key_size, value_size=value_size, num_heads=num_heads, dropout=dropout_rate, bayesian=bayesian
@@ -271,7 +271,7 @@ class DecoderLayer(nn.Module):
     ) -> torch.Tensor:
         self.kl = []
         self_attention = self.self_attention(x, x, x, self_attention_mask) * mask_pad
-        if self.training:
+        if self.training and self.bayesian:
             self.kl.append(self.self_attention.kl)
         out = None
         for i in range(self.num_encoder_layers):
@@ -279,7 +279,7 @@ class DecoderLayer(nn.Module):
                 cross = self.cross_attention(
                     self_attention, encoder_output[:, i], encoder_output[:, i], cross_attention_mask
                 )
-                if self.training:
+                if self.training and self.bayesian:
                     self.kl.append(self.cross_attention.kl)
                 linear = self.sigmoid(self.fully_connected[i](torch.cat([self_attention, cross], -1)))
                 out = cross * linear
@@ -287,7 +287,7 @@ class DecoderLayer(nn.Module):
                 cross = self.cross_attention(
                     self_attention, encoder_output[:, i], encoder_output[:, i], cross_attention_mask
                 )
-                if self.training:
+                if self.bayesian and self.training:
                     self.kl.append(self.cross_attention.kl)
                 linear = self.sigmoid(self.fully_connected[i](torch.cat([self_attention, cross], -1)))
                 out = out + cross * linear
