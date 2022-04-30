@@ -15,6 +15,7 @@ import numpy as np
 from typing import Optional, NoReturn, OrderedDict
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 import torch
 
 from .attention import AttentionLayer  # scaled dot product attention
@@ -24,6 +25,10 @@ from pl_bolts.optimizers import LinearWarmupCosineAnnealingLR
 from pytorch_lightning.utilities.types import STEP_OUTPUT
 from typing import Any
 from .model_utils import BeamSearch
+from .metrics.cider import Cider
+import pdb
+from nltk.translate import meteor
+from nltk.tokenize import word_tokenize
 
 
 class PWFeedForward(nn.Module):
@@ -384,7 +389,9 @@ class Decoder(nn.Module):
 
 class MeshedMemoryTransformer(pl.LightningModule):
     def __init__(
-        self, config: Configuration, beam_size=5, inv_word_map: dict = None, reference_captions: dict = None) -> None:
+        self, config: Configuration, beam_size=5, inv_word_map: dict = None, reference_captions: dict = None
+    ) -> None:
+        self.reference_captions = reference_captions
         self.comp_device = "cuda" if torch.cuda.is_available() else "cpu"
         super().__init__()
         # Test params/stuff
@@ -512,3 +519,55 @@ class MeshedMemoryTransformer(pl.LightningModule):
         result = BeamSearch(self, inputs, 5)
         result["test_image_ids"] = filename
         return result
+
+class MeshedMemoryTransformerSelfCrit(MeshedMemoryTransformer):
+    def __init__(self, config, train_inv_word_map, valid_inv_word_map, reference_captions):
+        super().__init__(config, reference_captions=reference_captions)
+        self.train_inv_word_map = train_inv_word_map
+        self.valid_inv_word_map = valid_inv_word_map
+
+    # Copied from ../utils.py because I don't want a metrics agg in here
+    def convert_tokens_to_string(self, caption: list) -> list:
+        return [self.train_inv_word_map.get(tok, "<unc>") for tok in caption if self.train_inv_word_map.get(tok, "<unc>") not in ["<pad>", "<start>"]]
+        
+    def training_step(self, batch, batch_idx):
+        # Run through, get results of beam search
+        inputs,captions,img_id = batch
+        batch_size = inputs.shape[0]
+        all_meteorscores = torch.empty([batch_size, 1])
+        all_lengths = torch.empty([batch_size, 1])
+        out = self(inputs, captions)
+        # for i in range(0, batch_size):
+        #     all_caps = self.reference_captions[img_id[i]]
+        #     #beam_search_result = BeamSearch(self, inputs[i,:,:].unsqueeze(0), 5)
+        #     #best_sequence = beam_search_result["test_batch_preds"]
+        #     #best_sequence_string = self.convert_tokens_to_string(best_sequence.tolist())
+        #     caption_string = [self.convert_tokens_to_string(cap) for cap in all_caps]            
+        #     #logprob = beam_search_result["logprob"]
+        #     all_logprobs[i] = logprob
+        #     #length = beam_search_result["length"]
+        #     all_lengths[i] = int(length[0])
+        #     all_meteorscores[i] = meteor(caption_string, best_sequence_string)
+        # Softmax to get probs
+        pred_seq = nn.functional.softmax(out, dim=-1)
+        max_probs,max_words=torch.max(pred_seq,dim=2)
+
+        for i in range(0, batch_size):
+            best_sequence_string = self.convert_tokens_to_string(max_words[i,:].tolist())
+            all_caps = self.reference_captions[img_id[i]]
+            captions_strings = [self.convert_tokens_to_string(cap) for cap in all_caps]
+            all_meteorscores[i] = meteor(captions_strings, best_sequence_string)
+            
+        # remove start token for backpropagation
+        y = captions[:, 1:].contiguous()
+        y = y.view(-1)
+        out = out[:, :-1].contiguous()
+        out = out.view(-1, self.vocab_size)
+        reward = all_meteorscores.to(inputs.device)
+        reward_baseline = torch.mean(reward)
+        loss = -torch.mean(self.loss_func(out, y, ignore_index=self.pad_token) * (reward - reward_baseline))
+        self.log("meteor", torch.mean(all_meteorscores))
+        self.log("loss", loss)
+        output = OrderedDict({"meteor": torch.mean(all_meteorscores), "loss": loss})
+        return output
+    

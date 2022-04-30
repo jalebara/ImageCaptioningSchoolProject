@@ -8,7 +8,8 @@ from time import time
 from typing import Optional, OrderedDict
 from .captioning_model import CaptioningModel
 import pytorch_lightning as pl
-
+import numpy as np
+import pdb
 
 def BeamSearch(model: pl.LightningModule, inputs, beam_size: int):
     # Searches for best sequence with beam search, by default beam_size=5
@@ -85,8 +86,11 @@ def BeamSearch(model: pl.LightningModule, inputs, beam_size: int):
     # Find the best one
     best_sequence_score, best_sequence_idx = torch.max(best_scores, dim=0, keepdim=True)
     best_sequence = best_sequences[best_sequence_idx, :].squeeze(0)
+    sequence_length = np.where(best_sequence == model.end_token)
     result = {
         "test_batch_preds": best_sequence,
+        "logprob": best_sequence_score,
+        "length": sequence_length
         # "test_image_ids": filename
     }
     result = OrderedDict(result)
